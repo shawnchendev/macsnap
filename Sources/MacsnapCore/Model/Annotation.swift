@@ -26,12 +26,14 @@ public enum TextBackground: String, Codable, Sendable {
 }
 
 public enum TextFont: String, Codable, Sendable {
+    case system = "system"
     case neucha = "neucha"
     case jetbrainsMono = "jetbrains-mono"
     case interDisplay = "inter-display"
 
     public var displayName: String {
         switch self {
+        case .system: return "System (San Francisco)"
         case .neucha: return "Neucha"
         case .jetbrainsMono: return "JetBrains Mono"
         case .interDisplay: return "Inter Display"
@@ -80,8 +82,8 @@ public struct Annotation: Identifiable, Equatable, Sendable {
         redactionSeed: UInt32 = 0,
         magnification: Double = 2.0,
         spotlightShape: SpotlightShape = .ellipse,
-        textBackground: TextBackground = .pill,
-        textFont: TextFont = .neucha
+        textBackground: TextBackground = .plain,
+        textFont: TextFont = .system
     ) {
         self.id = id
         self.kind = kind

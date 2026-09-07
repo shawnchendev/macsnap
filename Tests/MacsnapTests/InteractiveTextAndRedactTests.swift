@@ -60,6 +60,65 @@ final class InteractiveTextAndRedactTests: XCTestCase {
         overlay.commitActiveTextEditing()
 
         XCTAssertEqual(overlay.activeAnnotations[0].text, "Production Error Resolved")
+        XCTAssertEqual(overlay.activeAnnotations[0].textFont, .system)
+        XCTAssertEqual(overlay.activeAnnotations[0].textBackground, .plain)
+
+        // 5. Test moving the text label by dragging
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = overlay
+
+        let initialStart = overlay.activeAnnotations[0].start
+        let labelMid = CGPoint(x: initialStart.x + 20, y: initialStart.y + 10)
+        let startScreen = overlay.toScreenPoint(labelMid)
+        let startWindow = overlay.convert(startScreen, to: nil)
+
+        // Simulate mouseDown on the label
+        let downEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: startWindow,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        overlay.mouseDown(with: downEvent)
+
+        // Simulate mouseDragged by (60, 40)
+        let dragScreen = CGPoint(x: startScreen.x + 60, y: startScreen.y + 40)
+        let dragWindow = overlay.convert(dragScreen, to: nil)
+        let dragEvent = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: dragWindow,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        overlay.mouseDragged(with: dragEvent)
+
+        // Simulate mouseUp
+        let upEvent = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: dragWindow,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0.0
+        )!
+        overlay.mouseUp(with: upEvent)
+
+        let movedStart = overlay.activeAnnotations[0].start
+        XCTAssertGreaterThan(movedStart.x, initialStart.x + 50, "Label start X should have moved by ~60")
+        XCTAssertGreaterThan(movedStart.y, initialStart.y + 30, "Label start Y should have moved by ~40")
     }
 
     func testPixelatedRedactionHasCorrectColors() {

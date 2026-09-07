@@ -56,6 +56,8 @@ public final class FontManager: @unchecked Sendable {
     public func font(for textFont: TextFont, size: CGFloat) -> NSFont {
         registerBundledFonts()
         switch textFont {
+        case .system:
+            return NSFont.systemFont(ofSize: size, weight: .bold)
         case .neucha:
             if let f = NSFont(name: "Neucha", size: size) { return f }
             if let f = NSFont(name: "Caveat", size: size) { return f }

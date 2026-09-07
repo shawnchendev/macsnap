@@ -415,11 +415,21 @@ public enum RenderPipeline {
         let para = NSMutableParagraphStyle()
         para.lineBreakMode = .byWordWrapping
 
-        let attrStr = NSAttributedString(string: annotation.text, attributes: [
+        var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: textColor,
             .paragraphStyle: para
-        ])
+        ]
+
+        if annotation.textBackground == .plain {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor(white: 0, alpha: 0.40)
+            shadow.shadowOffset = NSSize(width: 0, height: -1.0)
+            shadow.shadowBlurRadius = 2.0
+            attributes[.shadow] = shadow
+        }
+
+        let attrStr = NSAttributedString(string: annotation.text, attributes: attributes)
 
         let padding: CGFloat = 8.0
         let textSize = attrStr.size()

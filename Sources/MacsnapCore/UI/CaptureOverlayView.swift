@@ -79,8 +79,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     public var redactionStyle: RedactionStyle = .pixelate
     public var spotlightShape: SpotlightShape = .ellipse
     public var spotlightZoom: Double = 2.0
-    public var textFont: TextFont = .neucha
-    public var textBackground: TextBackground = .pill
+    public var textFont: TextFont = .system
+    public var textBackground: TextBackground = .plain
 
     // Dragging & Interaction State
     private var isMouseDown: Bool = false
@@ -90,6 +90,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     private var activeSnapLock: TextBand? = nil
     private var liveCutBand: (orientation: CutOrientation, start: Double, end: Double)? = nil
     private var activeHandle: InteractionHandle? = nil
+
+    // Annotation Drag & Move
+    private var isDraggingAnnotation: Bool = false
+    private var dragAnnotationStartMouse: CGPoint = .zero
+    private var dragAnnotationInitialStates: [(index: Int, annotation: Annotation)] = []
 
     // View Pan & Zoom
     public var viewZoom: CGFloat = 1.0
@@ -856,6 +861,18 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                     scale: effectiveScale
                 )
             }
+
+            // Update cursor based on hover over annotations
+            if tool == .select || tool == .text {
+                let annPt = toAnnotationPoint(currentMousePoint)
+                if activeAnnotations.contains(where: { $0.bounds.insetBy(dx: -4, dy: -4).contains(annPt) }) {
+                    NSCursor.openHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            } else {
+                NSCursor.arrow.set()
+            }
         }
         needsDisplay = true
     }
@@ -933,7 +950,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
             if tool == .select {
                 // Check if clicking existing annotation
-                if let hitIdx = activeAnnotations.indices.reversed().first(where: { activeAnnotations[$0].bounds.contains(annPt) }) {
+                if let hitIdx = activeAnnotations.indices.reversed().first(where: { activeAnnotations[$0].bounds.insetBy(dx: -6, dy: -6).contains(annPt) }) {
                     if event.modifierFlags.contains(.shift) {
                         if selectedAnnotationIndices.contains(hitIdx) {
                             selectedAnnotationIndices.remove(hitIdx)
@@ -941,10 +958,20 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                             selectedAnnotationIndices.insert(hitIdx)
                         }
                     } else {
-                        selectedAnnotationIndices = [hitIdx]
+                        if !selectedAnnotationIndices.contains(hitIdx) {
+                            selectedAnnotationIndices = [hitIdx]
+                        }
                     }
+                    isDraggingAnnotation = true
+                    dragAnnotationStartMouse = annPt
+                    dragAnnotationInitialStates = selectedAnnotationIndices.compactMap { idx in
+                        idx < activeAnnotations.count ? (index: idx, annotation: activeAnnotations[idx]) : nil
+                    }
+                    NSCursor.closedHand.set()
                 } else {
                     selectedAnnotationIndices.removeAll()
+                    isDraggingAnnotation = false
+                    dragAnnotationInitialStates.removeAll()
                 }
             } else if tool == .eyedropper {
                 sampleEyedropperColor(at: annPt)
@@ -953,7 +980,16 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             } else if tool == .marker {
                 addMarker(at: annPt)
             } else if tool == .text {
-                createNewTextAnnotation(at: annPt)
+                // If user clicked on an existing text annotation, select & prepare to move it
+                if let hitIdx = activeAnnotations.indices.reversed().first(where: { activeAnnotations[$0].kind == .text && activeAnnotations[$0].bounds.insetBy(dx: -6, dy: -6).contains(annPt) }) {
+                    selectedAnnotationIndices = [hitIdx]
+                    isDraggingAnnotation = true
+                    dragAnnotationStartMouse = annPt
+                    dragAnnotationInitialStates = [(index: hitIdx, annotation: activeAnnotations[hitIdx])]
+                    NSCursor.closedHand.set()
+                } else {
+                    createNewTextAnnotation(at: annPt)
+                }
             } else if tool == .freehand || tool == .highlighter {
                 activeFreehandPoints = [annPt]
             }
@@ -973,6 +1009,24 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             selection = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         } else {
             let annPt = toAnnotationPoint(currentMousePoint)
+
+            if isDraggingAnnotation {
+                let dx = annPt.x - dragAnnotationStartMouse.x
+                let dy = annPt.y - dragAnnotationStartMouse.y
+                for item in dragAnnotationInitialStates {
+                    guard item.index < activeAnnotations.count else { continue }
+                    var updated = item.annotation
+                    updated.start = CGPoint(x: item.annotation.start.x + dx, y: item.annotation.start.y + dy)
+                    updated.end = CGPoint(x: item.annotation.end.x + dx, y: item.annotation.end.y + dy)
+                    if !item.annotation.points.isEmpty {
+                        updated.points = item.annotation.points.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
+                    }
+                    activeAnnotations[item.index] = updated
+                }
+                NSCursor.closedHand.set()
+                needsDisplay = true
+                return
+            }
 
             if tool == .cut {
                 let startPt = toAnnotationPoint(dragStart)
@@ -999,6 +1053,21 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             }
         } else {
             // Edit phase commit drag
+            if isDraggingAnnotation {
+                isDraggingAnnotation = false
+                let endAnn = toAnnotationPoint(currentMousePoint)
+                let dist = hypot(endAnn.x - dragAnnotationStartMouse.x, endAnn.y - dragAnnotationStartMouse.y)
+                if dist >= 2.0 {
+                    let moved = dragAnnotationInitialStates.compactMap { item in
+                        item.index < activeAnnotations.count ? activeAnnotations[item.index] : nil
+                    }
+                    recordOp(Operation(type: .annotate, annotations: moved))
+                }
+                dragAnnotationInitialStates.removeAll()
+                needsDisplay = true
+                return
+            }
+
             let startAnn = toAnnotationPoint(dragStart)
             let endAnn = toAnnotationPoint(currentMousePoint)
             let dragDist = hypot(endAnn.x - startAnn.x, endAnn.y - startAnn.y)
@@ -1453,17 +1522,18 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         )
         let tf = NSTextField(frame: tfFrame)
         tf.isBordered = false
-        tf.drawsBackground = true
-        tf.backgroundColor = NSColor(calibratedRed: 1.0, green: 0.99, blue: 0.96, alpha: 0.96)
-        tf.textColor = NSColor(hex: annotation.colorHex) ?? .black
+        tf.drawsBackground = false
+        tf.backgroundColor = .clear
+        tf.textColor = NSColor(hex: annotation.colorHex) ?? .white
         tf.font = font
         tf.stringValue = annotation.text
         tf.placeholderString = "Type label text..."
         tf.focusRingType = .none
         tf.wantsLayer = true
-        tf.layer?.cornerRadius = 6.0
-        tf.layer?.borderWidth = 1.5
-        tf.layer?.borderColor = NSColor.systemBlue.cgColor
+        tf.layer?.cornerRadius = 4.0
+        tf.layer?.borderWidth = 1.0
+        tf.layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.7).cgColor
+        tf.layer?.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 0.25).cgColor
         tf.delegate = self
         tf.target = self
         tf.action = #selector(onInlineTextFieldAction(_:))
@@ -1492,6 +1562,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 let removedId = activeAnnotations[idx].id
                 activeAnnotations.remove(at: idx)
                 recordOp(Operation(type: .delete, ids: [removedId]))
+                selectedAnnotationIndices.removeAll()
             } else {
                 var ann = activeAnnotations[idx]
                 ann.text = rawText
@@ -1501,6 +1572,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 ann.end = CGPoint(x: ann.start.x + strSize.width + 16, y: ann.start.y + strSize.height + 16)
                 activeAnnotations[idx] = ann
                 recordOp(Operation(type: .annotate, annotations: [ann]))
+                selectedAnnotationIndices = [idx]
+                setTool(.select)
             }
         }
 
@@ -1631,9 +1704,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
     public func cycleTextFont() {
         switch textFont {
-        case .neucha: textFont = .jetbrainsMono
+        case .system: textFont = .jetbrainsMono
         case .jetbrainsMono: textFont = .interDisplay
         case .interDisplay: textFont = .neucha
+        case .neucha: textFont = .system
         }
     }
 
