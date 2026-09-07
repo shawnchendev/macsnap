@@ -622,6 +622,12 @@ public final class CaptureOverlayView: NSView {
         } else {
             // Edit phase
             toolbar.hoveredAction = toolbar.action(at: currentMousePoint, screenBounds: self.bounds)
+            if let act = toolbar.hoveredAction,
+               let item = toolbar.items.first(where: { $0.action == act }) {
+                self.toolTip = item.shortcut.isEmpty ? item.tooltip : "\(item.tooltip) (\(item.shortcut))"
+            } else {
+                self.toolTip = nil
+            }
 
             // If highlighter in snap mode, probe text band
             if tool == .highlighter && highlighterMode == .snap {

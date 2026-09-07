@@ -6,7 +6,7 @@ import Cocoa
 @Suite struct ToolbarRenderTests {
     @Test func renderToolbarSnapshot() throws {
         let width: CGFloat = 1100
-        let height: CGFloat = 80
+        let height: CGFloat = 110
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
@@ -30,6 +30,7 @@ import Cocoa
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
         let toolbar = ToolbarView()
+        toolbar.hoveredAction = "tool-arrow"
         let screenBounds = CGRect(x: 0, y: 0, width: width, height: height)
 
         let nsContext = NSGraphicsContext(cgContext: context, flipped: true)
@@ -46,8 +47,8 @@ import Cocoa
             Issue.record("Failed to encode PNG")
             return
         }
-        let outPath = "/tmp/test_toolbar_current.png"
+        let outPath = "/tmp/test_toolbar_hover.png"
         try png.write(to: URL(fileURLWithPath: outPath))
-        print("Successfully rendered current toolbar to \(outPath)")
+        print("Successfully rendered hovered toolbar to \(outPath)")
     }
 }

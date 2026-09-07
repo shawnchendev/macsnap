@@ -38,38 +38,40 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "divider-1", shortcut: "", tooltip: "", isTool: false))
 
         // 2. Style & Canvas
-        list.append(ToolbarItem(action: "style-backdrop", shortcut: "B", tooltip: "Cycle backdrop style (Shift+B toggles shadow)", isTool: false))
-        list.append(ToolbarItem(action: "style-canvas", shortcut: "G", tooltip: "Cycle canvas growth: Framed / Overflow / Image", isTool: false))
+        list.append(ToolbarItem(action: "style-backdrop", shortcut: "B", tooltip: "Backdrop Style", isTool: false))
+        list.append(ToolbarItem(action: "style-canvas", shortcut: "G", tooltip: "Canvas Growth", isTool: false))
         list.append(ToolbarItem(action: "divider-2", shortcut: "", tooltip: "", isTool: false))
 
         // 3. Tools
-        list.append(ToolbarItem(action: "tool-select", shortcut: "V", tooltip: "Select, move & scale layers (V)"))
-        list.append(ToolbarItem(action: "tool-arrow", shortcut: "A", tooltip: "Arrow (A)"))
-        list.append(ToolbarItem(action: "tool-line", shortcut: "L", tooltip: "Straight line (L)"))
-        list.append(ToolbarItem(action: "tool-freehand", shortcut: "F", tooltip: "Freehand stroke (F)"))
-        list.append(ToolbarItem(action: "tool-highlighter", shortcut: "H", tooltip: "Highlighter: text snap or normal (H)"))
-        list.append(ToolbarItem(action: "tool-spotlight", shortcut: "S", tooltip: "Spotlight / Loupe magnifier (S)"))
-        list.append(ToolbarItem(action: "tool-marker", shortcut: "C", tooltip: "Numbered step counter (C)"))
-        list.append(ToolbarItem(action: "tool-rectangle", shortcut: "R", tooltip: "Rectangle (R, Alt+wheel rounds corners)"))
-        list.append(ToolbarItem(action: "tool-ellipse", shortcut: "E", tooltip: "Ellipse (E)"))
-        list.append(ToolbarItem(action: "tool-redact", shortcut: "D", tooltip: "Redact: pixelate or solid (D)"))
-        list.append(ToolbarItem(action: "tool-cut", shortcut: "X", tooltip: "Cut out horizontal/vertical band (X)"))
-        list.append(ToolbarItem(action: "tool-text", shortcut: "T", tooltip: "Text label: pill, outline, plain (T, Shift+T font)"))
-        list.append(ToolbarItem(action: "tool-ocr", shortcut: "O", tooltip: "Recognize & copy text (O)"))
-        list.append(ToolbarItem(action: "tool-eyedropper", shortcut: "I", tooltip: "Eyedropper color picker (I)"))
+        list.append(ToolbarItem(action: "tool-select", shortcut: "V", tooltip: "Select / Move"))
+        list.append(ToolbarItem(action: "tool-arrow", shortcut: "A", tooltip: "Arrow"))
+        list.append(ToolbarItem(action: "tool-line", shortcut: "L", tooltip: "Straight Line"))
+        list.append(ToolbarItem(action: "tool-freehand", shortcut: "F", tooltip: "Freehand"))
+        list.append(ToolbarItem(action: "tool-highlighter", shortcut: "H", tooltip: "Highlighter"))
+        list.append(ToolbarItem(action: "tool-spotlight", shortcut: "S", tooltip: "Spotlight / Loupe"))
+        list.append(ToolbarItem(action: "tool-marker", shortcut: "C", tooltip: "Step Counter"))
+        list.append(ToolbarItem(action: "tool-rectangle", shortcut: "R", tooltip: "Rectangle"))
+        list.append(ToolbarItem(action: "tool-ellipse", shortcut: "E", tooltip: "Ellipse"))
+        list.append(ToolbarItem(action: "tool-redact", shortcut: "D", tooltip: "Redact"))
+        list.append(ToolbarItem(action: "tool-cut", shortcut: "X", tooltip: "Cut Band"))
+        list.append(ToolbarItem(action: "tool-text", shortcut: "T", tooltip: "Text Label"))
+        list.append(ToolbarItem(action: "tool-ocr", shortcut: "O", tooltip: "OCR Recognition"))
+        list.append(ToolbarItem(action: "tool-eyedropper", shortcut: "I", tooltip: "Eyedropper"))
         list.append(ToolbarItem(action: "divider-3", shortcut: "", tooltip: "", isTool: false))
 
         // 4. Palette colors (1 to 8)
+        let colorNames = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Black", "White"]
         for (i, c) in paletteColors.enumerated() {
-            list.append(ToolbarItem(action: "color-\(i+1)", shortcut: "\(i+1)", tooltip: "Color \(i+1)", isTool: false, colorHex: c))
+            let name = i < colorNames.count ? colorNames[i] : "Color \(i+1)"
+            list.append(ToolbarItem(action: "color-\(i+1)", shortcut: "\(i+1)", tooltip: "\(name) (\(c))", isTool: false, colorHex: c))
         }
         list.append(ToolbarItem(action: "divider-4", shortcut: "", tooltip: "", isTool: false))
 
         // 5. Output Actions
-        list.append(ToolbarItem(action: "action-copy", shortcut: "⌘C", tooltip: "Copy PNG to clipboard only (⌘C)", isTool: false))
-        list.append(ToolbarItem(action: "action-save", shortcut: "⌘S", tooltip: "Save PNG only (⌘S)", isTool: false))
-        list.append(ToolbarItem(action: "action-pin", shortcut: "P", tooltip: "Pin capture on screen (P)", isTool: false))
-        list.append(ToolbarItem(action: "action-finish", shortcut: "⏎", tooltip: "Copy and Save (Enter)", isTool: false))
+        list.append(ToolbarItem(action: "action-copy", shortcut: "⌘C", tooltip: "Copy PNG", isTool: false))
+        list.append(ToolbarItem(action: "action-save", shortcut: "⌘S", tooltip: "Save PNG", isTool: false))
+        list.append(ToolbarItem(action: "action-pin", shortcut: "P", tooltip: "Pin Capture", isTool: false))
+        list.append(ToolbarItem(action: "action-finish", shortcut: "⏎", tooltip: "Done (Copy & Save)", isTool: false))
 
         self.items = list
     }
@@ -222,6 +224,105 @@ public final class ToolbarView: @unchecked Sendable {
                 context.restoreGState()
             }
         }
+
+        // Draw hover tooltip badge
+        if let hoveredAct = hoveredAction,
+           let pair = itemPairs.first(where: { $0.item.action == hoveredAct }),
+           !pair.item.action.hasPrefix("divider") {
+            drawTooltip(for: pair.item, itemRect: pair.rect, barRect: barRect, in: context, screenBounds: screenBounds)
+        }
+    }
+
+    private func drawTooltip(
+        for item: ToolbarItem,
+        itemRect: CGRect,
+        barRect: CGRect,
+        in context: CGContext,
+        screenBounds: CGRect
+    ) {
+        context.saveGState()
+
+        let titleFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let shortcutFont = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+
+        let attr = NSMutableAttributedString()
+        attr.append(NSAttributedString(string: item.tooltip, attributes: [
+            .font: titleFont,
+            .foregroundColor: NSColor.white
+        ]))
+
+        if !item.shortcut.isEmpty {
+            attr.append(NSAttributedString(string: "  ·  ", attributes: [
+                .font: titleFont,
+                .foregroundColor: NSColor(white: 0.55, alpha: 1.0)
+            ]))
+            attr.append(NSAttributedString(string: item.shortcut, attributes: [
+                .font: shortcutFont,
+                .foregroundColor: NSColor(white: 0.82, alpha: 1.0)
+            ]))
+        }
+
+        let textSize = attr.size()
+        let padH: CGFloat = 10.0
+        let padV: CGFloat = 5.0
+        let tooltipW = ceil(textSize.width + padH * 2.0)
+        let tooltipH = ceil(textSize.height + padV * 2.0)
+
+        let tooltipY = barRect.maxY + 8.0
+        var tooltipX = itemRect.midX - tooltipW / 2.0
+        tooltipX = max(12.0, min(screenBounds.maxX - tooltipW - 12.0, tooltipX))
+
+        let tooltipRect = CGRect(x: tooltipX, y: tooltipY, width: tooltipW, height: tooltipH)
+
+        // Drop shadow for the tooltip
+        context.setShadow(offset: CGSize(width: 0, height: 3), blur: 8, color: NSColor(white: 0, alpha: 0.40).cgColor)
+
+        // Tooltip container path with caret pointing up at itemRect.midX
+        let caretW: CGFloat = 8.0
+        let caretH: CGFloat = 5.0
+        let caretX = min(max(itemRect.midX, tooltipRect.minX + 8.0), tooltipRect.maxX - 8.0)
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: tooltipRect.minX + 6, y: tooltipRect.minY))
+        if caretX - caretW / 2.0 > tooltipRect.minX + 6 {
+            path.addLine(to: CGPoint(x: caretX - caretW / 2.0, y: tooltipRect.minY))
+        }
+        path.addLine(to: CGPoint(x: caretX, y: tooltipRect.minY - caretH))
+        path.addLine(to: CGPoint(x: caretX + caretW / 2.0, y: tooltipRect.minY))
+        path.addLine(to: CGPoint(x: tooltipRect.maxX - 6, y: tooltipRect.minY))
+        path.addArc(tangent1End: CGPoint(x: tooltipRect.maxX, y: tooltipRect.minY),
+                    tangent2End: CGPoint(x: tooltipRect.maxX, y: tooltipRect.minY + 6), radius: 6)
+        path.addLine(to: CGPoint(x: tooltipRect.maxX, y: tooltipRect.maxY - 6))
+        path.addArc(tangent1End: CGPoint(x: tooltipRect.maxX, y: tooltipRect.maxY),
+                    tangent2End: CGPoint(x: tooltipRect.maxX - 6, y: tooltipRect.maxY), radius: 6)
+        path.addLine(to: CGPoint(x: tooltipRect.minX + 6, y: tooltipRect.maxY))
+        path.addArc(tangent1End: CGPoint(x: tooltipRect.minX, y: tooltipRect.maxY),
+                    tangent2End: CGPoint(x: tooltipRect.minX, y: tooltipRect.maxY - 6), radius: 6)
+        path.addLine(to: CGPoint(x: tooltipRect.minX, y: tooltipRect.minY + 6))
+        path.addArc(tangent1End: CGPoint(x: tooltipRect.minX, y: tooltipRect.minY),
+                    tangent2End: CGPoint(x: tooltipRect.minX + 6, y: tooltipRect.minY), radius: 6)
+        path.closeSubpath()
+
+        // Background fill
+        context.addPath(path)
+        context.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 0.96).cgColor)
+        context.fillPath()
+
+        // Subtle border
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(path)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.18).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        // Text drawing
+        let textPoint = CGPoint(
+            x: tooltipRect.minX + padH,
+            y: tooltipRect.midY - textSize.height / 2.0
+        )
+        attr.draw(at: textPoint)
+
+        context.restoreGState()
     }
 
     public func action(at point: CGPoint, screenBounds: CGRect) -> String? {
