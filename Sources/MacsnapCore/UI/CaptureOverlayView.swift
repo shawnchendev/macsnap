@@ -150,6 +150,25 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         self.addTrackingArea(ta)
     }
 
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateSafeArea()
+    }
+
+    public func updateSafeArea() {
+        let screen = self.window?.screen ?? NSScreen.main
+        if let screen = screen {
+            let inset = screen.safeAreaInsets.top
+            if inset > 0 {
+                toolbar.safeAreaTop = inset
+            } else if screen.auxiliaryTopLeftArea != nil {
+                toolbar.safeAreaTop = 32.0
+            } else {
+                toolbar.safeAreaTop = 0.0
+            }
+        }
+    }
+
     // MARK: - Geometry mapping
 
     public override var isFlipped: Bool {
@@ -177,7 +196,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         // In Edit phase, fit canvas into screen with margins
         let canvas = currentCanvasRect()
         let marginX: CGFloat = 80.0
-        let topMargin: CGFloat = 70.0 // space for floating top toolbar
+        let barBottom = toolbar.toolbarRect(screenBounds: self.bounds).maxY
+        let topMargin: CGFloat = max(70.0, barBottom + 24.0) // space for floating top toolbar and hover tooltips
         let bottomMargin: CGFloat = 30.0
         let availW = self.bounds.width - marginX * 2
         let availH = self.bounds.height - (topMargin + bottomMargin)
@@ -210,6 +230,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     // MARK: - Drawing
 
     public override func draw(_ dirtyRect: NSRect) {
+        updateSafeArea()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
         if phase == .select {
@@ -687,7 +708,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         if cardX + cardW > bounds.maxX - 16.0 {
             cardX = max(16.0, bounds.maxX - cardW - 20.0)
         }
-        let cardY = max(70.0, min(bounds.maxY - cardH - 20.0, targetRect.minY))
+        let barBottom = toolbar.toolbarRect(screenBounds: bounds).maxY
+        let cardY = max(barBottom + 12.0, min(bounds.maxY - cardH - 20.0, targetRect.minY))
         let cardRect = CGRect(x: cardX, y: cardY, width: cardW, height: cardH)
         self.ocrCardRect = cardRect
         self.ocrCloseButtonRect = CGRect(x: cardRect.maxX - 32, y: cardRect.minY + 6, width: 26, height: 26)
@@ -803,7 +825,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         let toastW = strSize.width + 24.0
         let toastH: CGFloat = 30.0
         let toastX = screenBounds.midX - toastW / 2.0
-        let toastY = 70.0 // Below toolbar
+        let barBottom = toolbar.toolbarRect(screenBounds: screenBounds).maxY
+        let toastY = barBottom + 12.0
 
         let toastRect = CGRect(x: toastX, y: toastY, width: toastW, height: toastH)
         let path = CGPath(roundedRect: toastRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
@@ -1207,15 +1230,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 needsDisplay = true
                 return
             }
-            if phase == .edit {
-                // Return to select
-                phase = .select
-                needsDisplay = true
-            } else {
-                // Dismiss overlay
-                self.window?.close()
-                NSApplication.shared.terminate(nil)
-            }
+            dismissCapture()
             return
         }
 
@@ -1415,6 +1430,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         else if action == "action-redo" { redo() }
         else if action == "style-backdrop" { cycleBackground() }
         else if action == "style-canvas" { cycleCanvasBoundary(reverse: false) }
+        else if action == "action-discard" { dismissCapture() }
         else if action == "action-copy" { finish(outputMode: .copy) }
         else if action == "action-save" { finish(outputMode: .save) }
         else if action == "action-pin" { pinCapture() }
@@ -1875,6 +1891,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             recentsShelf.saveToRecent(image: rendered, log: opLog)
         }
 
+        self.window?.close()
+        NSApplication.shared.terminate(nil)
+    }
+
+    public func dismissCapture() {
         self.window?.close()
         NSApplication.shared.terminate(nil)
     }

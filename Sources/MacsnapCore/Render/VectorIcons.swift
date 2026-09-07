@@ -293,7 +293,7 @@ public enum VectorIcons {
             context.addLine(to: CGPoint(x: 12, y: 20))
             context.strokePath()
 
-        case "action-close", "close":
+        case "action-discard", "discard", "action-close", "close":
             context.move(to: CGPoint(x: 6, y: 6))
             context.addLine(to: CGPoint(x: 18, y: 18))
             context.move(to: CGPoint(x: 18, y: 6))

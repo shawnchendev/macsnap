@@ -24,6 +24,23 @@ public final class ToolbarView: @unchecked Sendable {
     public var activeColorHex: String = "#ff375f"
     public var paletteColors: [String] = PaletteConfig.defaultColors
     public var hoveredAction: String? = nil
+    public var safeAreaTop: CGFloat? = nil
+
+    public func effectiveSafeAreaTop() -> CGFloat {
+        if let explicit = safeAreaTop {
+            return explicit
+        }
+        if let screen = NSScreen.main {
+            let inset = screen.safeAreaInsets.top
+            if inset > 0 {
+                return inset
+            }
+            if screen.auxiliaryTopLeftArea != nil {
+                return 32.0
+            }
+        }
+        return 0.0
+    }
 
     public init() {
         setupItems()
@@ -72,6 +89,7 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "action-save", shortcut: "⌘S", tooltip: "Save PNG", isTool: false))
         list.append(ToolbarItem(action: "action-pin", shortcut: "P", tooltip: "Pin Capture", isTool: false))
         list.append(ToolbarItem(action: "action-finish", shortcut: "⏎", tooltip: "Done (Copy & Save)", isTool: false))
+        list.append(ToolbarItem(action: "action-discard", shortcut: "Esc", tooltip: "Discard", isTool: false))
 
         self.items = list
     }
@@ -96,7 +114,8 @@ public final class ToolbarView: @unchecked Sendable {
         }
 
         let originX = screenBounds.midX - totalW / 2.0
-        let originY = 16.0
+        let topInset = effectiveSafeAreaTop()
+        let originY = topInset > 0 ? (topInset + 12.0) : 16.0
         return CGRect(x: originX, y: originY, width: totalW, height: height)
     }
 
@@ -215,11 +234,24 @@ public final class ToolbarView: @unchecked Sendable {
                 } else if isHovered {
                     let hovPath = CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
                     context.addPath(hovPath)
-                    context.setFillColor(NSColor(white: 1.0, alpha: 0.10).cgColor)
+                    if item.action == "action-discard" {
+                        context.setFillColor(NSColor.systemRed.withAlphaComponent(0.28).cgColor)
+                    } else {
+                        context.setFillColor(NSColor(white: 1.0, alpha: 0.10).cgColor)
+                    }
                     context.fillPath()
                 }
 
-                let iconColor = isSelected ? NSColor.white : (isHovered ? NSColor(white: 0.95, alpha: 1.0) : NSColor(white: 0.75, alpha: 1.0))
+                let iconColor: NSColor
+                if item.action == "action-discard" && isHovered {
+                    iconColor = NSColor(red: 1.0, green: 0.35, blue: 0.35, alpha: 1.0)
+                } else if isSelected {
+                    iconColor = NSColor.white
+                } else if isHovered {
+                    iconColor = NSColor(white: 0.95, alpha: 1.0)
+                } else {
+                    iconColor = NSColor(white: 0.75, alpha: 1.0)
+                }
                 VectorIcons.drawIcon(action: item.action, in: context, bounds: rect, color: iconColor)
                 context.restoreGState()
             }
