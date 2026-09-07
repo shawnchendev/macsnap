@@ -149,9 +149,6 @@ public enum RenderPipeline {
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
               ) else { return source }
 
-        // Flip to top-down so row 0 in memory is the visual top row
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1.0, y: -1.0)
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let pixelData = context.data else { return source }
         let pixelBytes = pixelData.bindMemory(to: UInt8.self, capacity: width * height * 4)

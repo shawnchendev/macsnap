@@ -169,6 +169,44 @@ final class RenderPipelineTests: XCTestCase {
 
         XCTAssertGreaterThan(topR, 200, "Top should be red")
         XCTAssertGreaterThan(botB, 200, "Bottom should be blue")
+
+        // Now test with a small redaction
+        let redact = Annotation(
+            id: 1,
+            kind: .redaction,
+            start: CGPoint(x: 10, y: 10),
+            end: CGPoint(x: 20, y: 20),
+            redactionStyle: .solid
+        )
+        let renderedRedact = RenderPipeline.renderCapture(
+            source: src,
+            selection: CGRect(x: 0, y: 0, width: 100, height: 100),
+            annotations: [redact],
+            backdropStyle: .none,
+            imageShadow: false,
+            boundaryMode: .image,
+            scale: 1.0
+        )!
+
+        let redactData = renderedRedact.dataProvider!.data!
+        let redactPtr = CFDataGetBytePtr(redactData)!
+        let topRRedact = redactPtr[20 * renderedRedact.bytesPerRow]
+        let botBRedact = redactPtr[80 * renderedRedact.bytesPerRow + 2]
+
+        XCTAssertGreaterThan(topRRedact, 200, "Top should still be red when redaction is present")
+        XCTAssertGreaterThan(botBRedact, 200, "Bottom should still be blue when redaction is present")
+
+        // Redacted point (15, 15) should be solid black (0, 0, 0)
+        let redactAt15R = redactPtr[15 * renderedRedact.bytesPerRow + 15 * 4 + 0]
+        let redactAt15G = redactPtr[15 * renderedRedact.bytesPerRow + 15 * 4 + 1]
+        let redactAt15B = redactPtr[15 * renderedRedact.bytesPerRow + 15 * 4 + 2]
+        XCTAssertEqual(redactAt15R, 0, "Redacted pixel at (15, 15) should be black")
+        XCTAssertEqual(redactAt15G, 0, "Redacted pixel at (15, 15) should be black")
+        XCTAssertEqual(redactAt15B, 0, "Redacted pixel at (15, 15) should be black")
+
+        // Unredacted point at same y row (85, 15) should remain red
+        let unredactedR = redactPtr[15 * renderedRedact.bytesPerRow + 85 * 4 + 0]
+        XCTAssertGreaterThan(unredactedR, 200, "Unredacted pixel at (85, 15) should remain red")
     }
 
     @MainActor
