@@ -36,7 +36,7 @@ public enum HighlighterMode {
     case normal
 }
 
-public final class CaptureOverlayView: NSView {
+public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     // Data
     public var captureData: ScreenCaptureData
     public var pristineSource: CGImage
@@ -99,11 +99,16 @@ public final class CaptureOverlayView: NSView {
 
     // Inline text editing
     public var editingTextAnnotationIndex: Int? = nil
-    private var inlineTextView: NSTextView? = nil
+    private var activeInlineTextField: NSTextField? = nil
 
     // OCR overlay feedback
     public var ocrTextResult: String? = nil
     public var isScanningOCR: Bool = false
+    public var ocrStatusMessage: String? = nil
+    private var ocrCardRect: CGRect? = nil
+    private var ocrCloseButtonRect: CGRect? = nil
+    private var ocrCopyButtonRect: CGRect? = nil
+    private var ocrDismissButtonRect: CGRect? = nil
 
     // Scrolling capture state
     public var isScrollingCaptureActive: Bool = false
@@ -320,10 +325,19 @@ public final class CaptureOverlayView: NSView {
         let targetRect = imageRectOnScreen()
 
         // 2. Render capture (card, background, redactions, spotlights, annotations)
+        let visibleAnnotations: [Annotation]
+        if let editIdx = editingTextAnnotationIndex, editIdx < activeAnnotations.count {
+            var copy = activeAnnotations
+            copy[editIdx].text = "" // Hide text while inline editing
+            visibleAnnotations = copy
+        } else {
+            visibleAnnotations = activeAnnotations
+        }
+
         if let rendered = RenderPipeline.renderCapture(
             source: pristineSource,
             selection: selection,
-            annotations: activeAnnotations,
+            annotations: visibleAnnotations,
             backdropStyle: backdropStyle,
             imageShadow: imageShadow,
             boundaryMode: canvasBoundaryMode,
@@ -333,7 +347,7 @@ public final class CaptureOverlayView: NSView {
             nsRendered.draw(in: targetRect)
         }
 
-        // 3. Live drawing preview (arrows, lines, freehand, live cut band, highlighter)
+        // 3. Live drawing preview (arrows, lines, freehand, live cut band, highlighter, ocr box)
         drawLiveToolPreview(in: context, targetRect: targetRect)
 
         // 4. Draw 8 external recropping handles
@@ -348,6 +362,13 @@ public final class CaptureOverlayView: NSView {
         // 7. OCR overlay if scanning or showing result
         if isScanningOCR {
             drawOCRScanning(in: context, targetRect: targetRect)
+        } else if let result = ocrTextResult {
+            drawOCRResultCard(in: context, targetRect: targetRect, text: result)
+        }
+
+        // 8. Status Toast (e.g. OCR copied feedback)
+        if let msg = ocrStatusMessage {
+            drawStatusToast(in: context, message: msg, screenBounds: bounds)
         }
     }
 
@@ -516,6 +537,26 @@ public final class CaptureOverlayView: NSView {
                     context.strokePath()
                 }
 
+            case .ocr:
+                let r = CGRect(
+                    x: min(dragStart.x, currentMousePoint.x),
+                    y: min(dragStart.y, currentMousePoint.y),
+                    width: abs(currentMousePoint.x - dragStart.x),
+                    height: abs(currentMousePoint.y - dragStart.y)
+                )
+                context.setFillColor(NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 0.15).cgColor)
+                context.fill(r)
+                context.setStrokeColor(NSColor.systemCyan.cgColor)
+                context.setLineWidth(1.5)
+                context.setLineDash(phase: 0, lengths: [4, 4])
+                context.stroke(r)
+                let font = NSFont.systemFont(ofSize: 11, weight: .bold)
+                let str = NSAttributedString(string: "Scan Text (OCR)", attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.white
+                ])
+                str.draw(at: CGPoint(x: r.minX + 6, y: max(r.minY - 18, 16)))
+
             default:
                 break
             }
@@ -593,11 +634,188 @@ public final class CaptureOverlayView: NSView {
 
     private func drawOCRScanning(in context: CGContext, targetRect: CGRect) {
         context.saveGState()
+
+        // Shaded scanning overlay over targetRect
+        context.setFillColor(NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 0.08).cgColor)
+        context.fill(targetRect)
+
+        // Glowing scanning beam
         context.setStrokeColor(NSColor.systemCyan.cgColor)
-        context.setLineWidth(2.0)
+        context.setLineWidth(2.5)
+        context.setShadow(offset: .zero, blur: 8, color: NSColor.systemCyan.cgColor)
         context.move(to: CGPoint(x: targetRect.minX, y: targetRect.midY))
         context.addLine(to: CGPoint(x: targetRect.maxX, y: targetRect.midY))
         context.strokePath()
+
+        // Scanning pill HUD in center
+        let hudW: CGFloat = 240.0
+        let hudH: CGFloat = 34.0
+        let hudRect = CGRect(x: targetRect.midX - hudW / 2.0, y: targetRect.midY - hudH / 2.0, width: hudW, height: hudH)
+        let pillPath = CGPath(roundedRect: hudRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        context.setShadow(offset: CGSize(width: 0, height: 4), blur: 12, color: NSColor(white: 0, alpha: 0.5).cgColor)
+        context.addPath(pillPath)
+        context.setFillColor(NSColor(calibratedWhite: 0.1, alpha: 0.95).cgColor)
+        context.fillPath()
+
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(pillPath)
+        context.setStrokeColor(NSColor.systemCyan.cgColor)
+        context.setLineWidth(1.2)
+        context.strokePath()
+
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let str = NSAttributedString(string: "Scanning text (Apple Vision)...", attributes: [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ])
+        let strSize = str.size()
+        str.draw(at: CGPoint(x: hudRect.midX - strSize.width / 2.0, y: hudRect.midY - strSize.height / 2.0))
+
+        context.restoreGState()
+    }
+
+    private func drawOCRResultCard(in context: CGContext, targetRect: CGRect, text: String) {
+        let bounds = self.bounds
+        let cardW: CGFloat = 340.0
+        let cardH: CGFloat = min(400.0, max(220.0, targetRect.height))
+        var cardX = targetRect.maxX + 16.0
+        if cardX + cardW > bounds.maxX - 16.0 {
+            cardX = max(16.0, bounds.maxX - cardW - 20.0)
+        }
+        let cardY = max(70.0, min(bounds.maxY - cardH - 20.0, targetRect.minY))
+        let cardRect = CGRect(x: cardX, y: cardY, width: cardW, height: cardH)
+        self.ocrCardRect = cardRect
+        self.ocrCloseButtonRect = CGRect(x: cardRect.maxX - 32, y: cardRect.minY + 6, width: 26, height: 26)
+        self.ocrCopyButtonRect = CGRect(x: cardRect.minX + 12, y: cardRect.maxY - 30, width: 96, height: 22)
+        self.ocrDismissButtonRect = CGRect(x: cardRect.maxX - 100, y: cardRect.maxY - 30, width: 88, height: 22)
+
+        context.saveGState()
+
+        // Drop shadow
+        context.setShadow(offset: CGSize(width: 0, height: 6), blur: 16, color: NSColor(white: 0, alpha: 0.55).cgColor)
+
+        // Card background
+        let path = CGPath(roundedRect: cardRect, cornerWidth: 10, cornerHeight: 10, transform: nil)
+        context.addPath(path)
+        context.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 0.96).cgColor)
+        context.fillPath()
+
+        // Card border
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(path)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.20).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        // Header: Title
+        let headerFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
+        let isSuccess = !text.contains("No text detected")
+        let titleColor = isSuccess ? NSColor.systemGreen : NSColor.systemOrange
+        let titleStr = isSuccess ? "✓ Text Copied to Clipboard" : "Notice"
+        let titleAttr = NSAttributedString(string: titleStr, attributes: [
+            .font: headerFont,
+            .foregroundColor: titleColor
+        ])
+        titleAttr.draw(at: CGPoint(x: cardRect.minX + 14, y: cardRect.minY + 12))
+
+        // Close button [✕]
+        let closeFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+        let closeAttr = NSAttributedString(string: "✕", attributes: [
+            .font: closeFont,
+            .foregroundColor: NSColor(white: 0.7, alpha: 1.0)
+        ])
+        closeAttr.draw(at: CGPoint(x: cardRect.maxX - 24, y: cardRect.minY + 12))
+
+        // Divider
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+        context.setLineWidth(1.0)
+        context.move(to: CGPoint(x: cardRect.minX + 12, y: cardRect.minY + 36))
+        context.addLine(to: CGPoint(x: cardRect.maxX - 12, y: cardRect.minY + 36))
+        context.strokePath()
+
+        // Text content
+        let textFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byWordWrapping
+        let contentAttr = NSAttributedString(string: text, attributes: [
+            .font: textFont,
+            .foregroundColor: NSColor(white: 0.94, alpha: 1.0),
+            .paragraphStyle: para
+        ])
+        let textBounds = CGRect(
+            x: cardRect.minX + 14,
+            y: cardRect.minY + 44,
+            width: cardW - 28,
+            height: cardH - 80
+        )
+        contentAttr.draw(in: textBounds)
+
+        // Footer buttons: "Copy Again" button pill
+        let copyPill = CGPath(roundedRect: self.ocrCopyButtonRect!, cornerWidth: 5, cornerHeight: 5, transform: nil)
+        context.addPath(copyPill)
+        context.setFillColor(NSColor(calibratedRed: 0.0, green: 0.5, blue: 1.0, alpha: 0.25).cgColor)
+        context.fillPath()
+        context.addPath(copyPill)
+        context.setStrokeColor(NSColor.systemCyan.withAlphaComponent(0.6).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        let btnFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let copyAgain = NSAttributedString(string: "Copy Again", attributes: [
+            .font: btnFont,
+            .foregroundColor: NSColor.systemCyan
+        ])
+        copyAgain.draw(at: CGPoint(x: cardRect.minX + 26, y: cardRect.maxY - 26))
+
+        // Dismiss button pill
+        let dismissPill = CGPath(roundedRect: self.ocrDismissButtonRect!, cornerWidth: 5, cornerHeight: 5, transform: nil)
+        context.addPath(dismissPill)
+        context.setFillColor(NSColor(calibratedWhite: 0.2, alpha: 0.5).cgColor)
+        context.fillPath()
+        context.addPath(dismissPill)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.15).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        let dismissBtn = NSAttributedString(string: "Dismiss (Esc)", attributes: [
+            .font: btnFont,
+            .foregroundColor: NSColor(white: 0.75, alpha: 1.0)
+        ])
+        dismissBtn.draw(at: CGPoint(x: cardRect.maxX - 92, y: cardRect.maxY - 26))
+
+        context.restoreGState()
+    }
+
+    private func drawStatusToast(in context: CGContext, message: String, screenBounds: CGRect) {
+        context.saveGState()
+
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let attr = NSAttributedString(string: message, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ])
+        let strSize = attr.size()
+        let toastW = strSize.width + 24.0
+        let toastH: CGFloat = 30.0
+        let toastX = screenBounds.midX - toastW / 2.0
+        let toastY = 70.0 // Below toolbar
+
+        let toastRect = CGRect(x: toastX, y: toastY, width: toastW, height: toastH)
+        let path = CGPath(roundedRect: toastRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+
+        context.setShadow(offset: CGSize(width: 0, height: 3), blur: 8, color: NSColor(white: 0, alpha: 0.4).cgColor)
+        context.addPath(path)
+        context.setFillColor(NSColor(calibratedWhite: 0.14, alpha: 0.96).cgColor)
+        context.fillPath()
+
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(path)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.18).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        attr.draw(at: CGPoint(x: toastRect.minX + 12, y: toastRect.midY - strSize.height / 2.0))
+
         context.restoreGState()
     }
 
@@ -676,7 +894,42 @@ public final class CaptureOverlayView: NSView {
                 return
             }
 
+            // Check OCR card click
+            if let resultText = ocrTextResult, let card = ocrCardRect, card.contains(dragStart) {
+                if (ocrCloseButtonRect?.contains(dragStart) == true) || (ocrDismissButtonRect?.contains(dragStart) == true) {
+                    ocrTextResult = nil
+                    ocrCardRect = nil
+                    needsDisplay = true
+                    return
+                }
+                if ocrCopyButtonRect?.contains(dragStart) == true {
+                    _ = ScreenCaptureEngine.copyTextToClipboard(resultText)
+                    ocrStatusMessage = "Copied text to clipboard!"
+                    needsDisplay = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        self?.ocrStatusMessage = nil
+                        self?.needsDisplay = true
+                    }
+                    return
+                }
+                // Absorb click within OCR card
+                return
+            }
+
+            // Commit active inline text field if clicking outside
+            if activeInlineTextField != nil {
+                commitActiveTextEditing()
+            }
+
             let annPt = toAnnotationPoint(dragStart)
+
+            // Double-click to edit existing text annotation
+            if event.clickCount >= 2 {
+                if let hitIdx = activeAnnotations.indices.reversed().first(where: { activeAnnotations[$0].kind == .text && activeAnnotations[$0].bounds.contains(annPt) }) {
+                    beginTextEditing(for: activeAnnotations[hitIdx], index: hitIdx)
+                    return
+                }
+            }
 
             if tool == .select {
                 // Check if clicking existing annotation
@@ -696,11 +949,11 @@ public final class CaptureOverlayView: NSView {
             } else if tool == .eyedropper {
                 sampleEyedropperColor(at: annPt)
             } else if tool == .ocr {
-                runOCR()
+                // OCR region drag initialized
             } else if tool == .marker {
                 addMarker(at: annPt)
             } else if tool == .text {
-                beginTextEntry(at: annPt)
+                createNewTextAnnotation(at: annPt)
             } else if tool == .freehand || tool == .highlighter {
                 activeFreehandPoints = [annPt]
             }
@@ -853,6 +1106,16 @@ public final class CaptureOverlayView: NSView {
                         spotlightShape: spotlightShape
                     ))
                 }
+            } else if tool == .ocr {
+                if dragDim >= 10.0 {
+                    let minX = min(startAnn.x, endAnn.x)
+                    let minY = min(startAnn.y, endAnn.y)
+                    let w = abs(endAnn.x - startAnn.x)
+                    let h = abs(endAnn.y - startAnn.y)
+                    runOCR(region: CGRect(x: minX, y: minY, width: w, height: h))
+                } else {
+                    runOCR(region: nil)
+                }
             }
         }
         needsDisplay = true
@@ -865,6 +1128,16 @@ public final class CaptureOverlayView: NSView {
 
         // Esc key
         if event.keyCode == 53 {
+            if activeInlineTextField != nil {
+                cancelActiveTextEditing()
+                return
+            }
+            if ocrTextResult != nil {
+                ocrTextResult = nil
+                ocrCardRect = nil
+                needsDisplay = true
+                return
+            }
             if phase == .edit {
                 // Return to select
                 phase = .select
@@ -966,7 +1239,9 @@ public final class CaptureOverlayView: NSView {
             } else {
                 setTool(.text)
             }
-        case "o": runOCR()
+        case "o":
+            setTool(.ocr)
+            runOCR(region: nil)
         case "i": setTool(.eyedropper)
         case "b":
             if isShift {
@@ -1097,7 +1372,9 @@ public final class CaptureOverlayView: NSView {
             case "tool-redact": tool = .redact
             case "tool-cut": tool = .cut
             case "tool-text": tool = .text
-            case "tool-ocr": runOCR()
+            case "tool-ocr":
+                tool = .ocr
+                runOCR(region: nil)
             case "tool-eyedropper": tool = .eyedropper
             default: break
             }
@@ -1128,19 +1405,154 @@ public final class CaptureOverlayView: NSView {
         commitAnnotation(marker)
     }
 
-    public func beginTextEntry(at point: CGPoint) {
+    // MARK: - Text Editing & Creation
+
+    public func createNewTextAnnotation(at point: CGPoint) {
         let textAnn = Annotation(
             id: opLog.nextId,
             kind: .text,
             start: point,
-            end: CGPoint(x: point.x + 120, y: point.y + 36),
-            text: "Label",
+            end: CGPoint(x: point.x + 140, y: point.y + 36),
+            text: "",
             colorHex: activeColorHex,
             size: strokeSize,
             textBackground: textBackground,
             textFont: textFont
         )
         commitAnnotation(textAnn)
+        let idx = activeAnnotations.count - 1
+        beginTextEditing(for: textAnn, index: idx)
+    }
+
+    public func beginTextEntry(at point: CGPoint) {
+        createNewTextAnnotation(at: point)
+    }
+
+    public func beginTextEditing(for annotation: Annotation, index: Int) {
+        if activeInlineTextField != nil && editingTextAnnotationIndex != index {
+            commitActiveTextEditing()
+        }
+
+        let startScreen = toScreenPoint(annotation.start)
+        let fontSize = max(14.0, annotation.size * 4.0)
+        let font = FontManager.shared.font(for: annotation.textFont, size: fontSize)
+
+        let initialWidth: CGFloat
+        if !annotation.text.isEmpty {
+            let attr = NSAttributedString(string: annotation.text, attributes: [.font: font])
+            initialWidth = max(160.0, attr.size().width + 30.0)
+        } else {
+            initialWidth = 160.0
+        }
+
+        let tfFrame = NSRect(
+            x: max(10, startScreen.x - 6),
+            y: max(10, startScreen.y - 6),
+            width: initialWidth,
+            height: max(32.0, fontSize + 16.0)
+        )
+        let tf = NSTextField(frame: tfFrame)
+        tf.isBordered = false
+        tf.drawsBackground = true
+        tf.backgroundColor = NSColor(calibratedRed: 1.0, green: 0.99, blue: 0.96, alpha: 0.96)
+        tf.textColor = NSColor(hex: annotation.colorHex) ?? .black
+        tf.font = font
+        tf.stringValue = annotation.text
+        tf.placeholderString = "Type label text..."
+        tf.focusRingType = .none
+        tf.wantsLayer = true
+        tf.layer?.cornerRadius = 6.0
+        tf.layer?.borderWidth = 1.5
+        tf.layer?.borderColor = NSColor.systemBlue.cgColor
+        tf.delegate = self
+        tf.target = self
+        tf.action = #selector(onInlineTextFieldAction(_:))
+
+        self.addSubview(tf)
+        self.window?.makeFirstResponder(tf)
+        if !annotation.text.isEmpty {
+            tf.currentEditor()?.selectAll(nil)
+        }
+
+        self.activeInlineTextField = tf
+        self.editingTextAnnotationIndex = index
+        self.needsDisplay = true
+    }
+
+    @objc private func onInlineTextFieldAction(_ sender: Any?) {
+        commitActiveTextEditing()
+    }
+
+    public func commitActiveTextEditing() {
+        guard let tf = activeInlineTextField, let idx = editingTextAnnotationIndex else { return }
+
+        let rawText = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if idx < activeAnnotations.count {
+            if rawText.isEmpty {
+                let removedId = activeAnnotations[idx].id
+                activeAnnotations.remove(at: idx)
+                recordOp(Operation(type: .delete, ids: [removedId]))
+            } else {
+                var ann = activeAnnotations[idx]
+                ann.text = rawText
+                let fontSize = max(14.0, ann.size * 4.0)
+                let font = FontManager.shared.font(for: ann.textFont, size: fontSize)
+                let strSize = (rawText as NSString).size(withAttributes: [.font: font])
+                ann.end = CGPoint(x: ann.start.x + strSize.width + 16, y: ann.start.y + strSize.height + 16)
+                activeAnnotations[idx] = ann
+                recordOp(Operation(type: .annotate, annotations: [ann]))
+            }
+        }
+
+        tf.removeFromSuperview()
+        self.activeInlineTextField = nil
+        self.editingTextAnnotationIndex = nil
+        self.window?.makeFirstResponder(self)
+        self.needsDisplay = true
+    }
+
+    public func cancelActiveTextEditing() {
+        guard let tf = activeInlineTextField, let idx = editingTextAnnotationIndex else { return }
+        if idx < activeAnnotations.count && activeAnnotations[idx].text.isEmpty {
+            let removedId = activeAnnotations[idx].id
+            activeAnnotations.remove(at: idx)
+            recordOp(Operation(type: .delete, ids: [removedId]))
+        }
+        tf.removeFromSuperview()
+        self.activeInlineTextField = nil
+        self.editingTextAnnotationIndex = nil
+        self.window?.makeFirstResponder(self)
+        self.needsDisplay = true
+    }
+
+    // MARK: - NSTextFieldDelegate
+    public func controlTextDidEndEditing(_ obj: Notification) {
+        commitActiveTextEditing()
+    }
+
+    public func controlTextDidChange(_ obj: Notification) {
+        guard let tf = activeInlineTextField, let idx = editingTextAnnotationIndex, idx < activeAnnotations.count else { return }
+        let ann = activeAnnotations[idx]
+        let fontSize = max(14.0, ann.size * 4.0)
+        let font = FontManager.shared.font(for: ann.textFont, size: fontSize)
+        let strSize = (tf.stringValue as NSString).size(withAttributes: [.font: font])
+        let neededWidth = max(160.0, strSize.width + 30.0)
+        if neededWidth > tf.frame.width {
+            var f = tf.frame
+            f.size.width = min(neededWidth, self.bounds.width - f.origin.x - 20)
+            tf.frame = f
+        }
+    }
+
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitActiveTextEditing()
+            return true
+        } else if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            cancelActiveTextEditing()
+            return true
+        }
+        return false
     }
 
     public func applyCut(_ cut: (orientation: CutOrientation, start: Double, end: Double)) {
@@ -1282,10 +1694,10 @@ public final class CaptureOverlayView: NSView {
 
         context.draw(pristineSource, in: CGRect(x: -pxX, y: -(pristineSource.height - 1 - pxY), width: pristineSource.width, height: pristineSource.height))
         if let data = context.data {
-            let pixel = data.bindMemory(to: UInt32.self, capacity: 1).pointee
-            let r = (pixel >> 24) & 0xff
-            let g = (pixel >> 16) & 0xff
-            let b = (pixel >> 8) & 0xff
+            let ptr = data.bindMemory(to: UInt8.self, capacity: 4)
+            let r = ptr[0]
+            let g = ptr[1]
+            let b = ptr[2]
             let hex = String(format: "#%02x%02x%02x", r, g, b)
             self.activeColorHex = hex
             self.toolbar.activeColorHex = hex
@@ -1293,26 +1705,49 @@ public final class CaptureOverlayView: NSView {
         }
     }
 
-    public func runOCR() {
-        guard let rendered = RenderPipeline.renderCapture(
+    public func runOCR(region: CGRect? = nil) {
+        guard let fullRendered = RenderPipeline.renderCapture(
             source: pristineSource,
-            selection: selection,
+            selection: selection.isEmpty ? CGRect(origin: .zero, size: pristineSourceSize()) : selection,
             annotations: activeAnnotations,
             scale: effectiveScale
         ) else { return }
 
+        let imageToScan: CGImage
+        if let r = region, r.width > 5 && r.height > 5 {
+            let cropX = max(0, r.minX * effectiveScale)
+            let cropY = max(0, r.minY * effectiveScale)
+            let cropW = min(CGFloat(fullRendered.width) - cropX, r.width * effectiveScale)
+            let cropH = min(CGFloat(fullRendered.height) - cropY, r.height * effectiveScale)
+            let cropRect = CGRect(x: cropX, y: cropY, width: max(1, cropW), height: max(1, cropH))
+            imageToScan = fullRendered.cropping(to: cropRect) ?? fullRendered
+        } else {
+            imageToScan = fullRendered
+        }
+
         isScanningOCR = true
+        ocrTextResult = nil
+        ocrStatusMessage = nil
         needsDisplay = true
 
         Task {
-            let (text, _) = await OCRService.recognizeText(from: rendered)
+            let (text, _) = await OCRService.recognizeText(from: imageToScan)
             await MainActor.run {
                 self.isScanningOCR = false
-                if !text.isEmpty {
-                    _ = ScreenCaptureEngine.copyTextToClipboard(text)
-                    self.ocrTextResult = text
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    _ = ScreenCaptureEngine.copyTextToClipboard(trimmed)
+                    self.ocrTextResult = trimmed
+                    self.ocrStatusMessage = "Copied text to clipboard!"
+                } else {
+                    self.ocrTextResult = "No text detected in selected area."
+                    self.ocrStatusMessage = "No text detected"
                 }
                 self.needsDisplay = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.ocrStatusMessage = nil
+                    self?.needsDisplay = true
+                }
             }
         }
     }

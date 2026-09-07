@@ -35,7 +35,7 @@ final class RenderPipelineTests: XCTestCase {
             scale: 1.0
         )
 
-        // Verify that pixels inside redaction rect are black (0xFF000000 or (0,0,0))
+        // Verify that pixels inside redaction rect are black (0, 0, 0)
         let testCtx = CGContext(
             data: nil,
             width: 100,
@@ -46,19 +46,57 @@ final class RenderPipelineTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
         )!
         testCtx.draw(redacted, in: CGRect(x: 0, y: 0, width: 100, height: 100))
-        let data = testCtx.data!.bindMemory(to: UInt32.self, capacity: 100 * 100)
+        let bytes = testCtx.data!.bindMemory(to: UInt8.self, capacity: 100 * 100 * 4)
 
         // Pixel at center (50, 50)
-        // Memory offset: (height - 1 - y) * width + x
-        let memY = 100 - 1 - 50
-        let pixelVal = data[memY * 100 + 50]
+        let offset = (50 * 100 + 50) * 4
+        XCTAssertEqual(bytes[offset + 0], 0, "Red must be 0")
+        XCTAssertEqual(bytes[offset + 1], 0, "Green must be 0")
+        XCTAssertEqual(bytes[offset + 2], 0, "Blue must be 0")
 
-        let r = (pixelVal >> 24) & 0xff
-        let g = (pixelVal >> 16) & 0xff
-        let b = (pixelVal >> 8) & 0xff
-        XCTAssertEqual(r, 0)
-        XCTAssertEqual(g, 0)
-        XCTAssertEqual(b, 0)
+        // Also test .pixelate on a green image to ensure it doesn't turn red!
+        let greenCtx = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 400,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        )!
+        greenCtx.setFillColor(CGColor(red: 0, green: 0.8, blue: 0.2, alpha: 1))
+        greenCtx.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let greenImg = greenCtx.makeImage()!
+
+        let pixAnn = Annotation(
+            id: 2,
+            kind: .redaction,
+            start: CGPoint(x: 20, y: 20),
+            end: CGPoint(x: 80, y: 80),
+            redactionStyle: .pixelate
+        )
+        let pixRedacted = RenderPipeline.applyRedactions(
+            to: greenImg,
+            annotations: [pixAnn],
+            selectionSize: CGSize(width: 100, height: 100),
+            scale: 1.0
+        )
+        let pixTestCtx = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 400,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        )!
+        pixTestCtx.draw(pixRedacted, in: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let pixBytes = pixTestCtx.data!.bindMemory(to: UInt8.self, capacity: 100 * 100 * 4)
+        let pixOffset = (50 * 100 + 50) * 4
+
+        // The pixelated block should remain greenish (high Green, low Red)
+        XCTAssertLessThan(pixBytes[pixOffset + 0], 50, "Red must NOT be high in a green image")
+        XCTAssertGreaterThan(pixBytes[pixOffset + 1], 150, "Green should remain high")
     }
 
     func testRenderCaptureProducesOutput() {

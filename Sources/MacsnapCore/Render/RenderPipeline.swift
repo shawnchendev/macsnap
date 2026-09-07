@@ -149,9 +149,12 @@ public enum RenderPipeline {
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
               ) else { return source }
 
+        // Flip to top-down so row 0 in memory is the visual top row
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let pixelData = context.data else { return source }
-        let pixels = pixelData.bindMemory(to: UInt32.self, capacity: width * height)
+        let pixelBytes = pixelData.bindMemory(to: UInt8.self, capacity: width * height * 4)
 
         for red in redactions {
             let rect = red.bounds
@@ -162,16 +165,19 @@ public enum RenderPipeline {
             guard x1 >= x0, y1 >= y0 else { continue }
 
             if red.redactionStyle == .solid {
-                // Pure black
-                let blackPixel: UInt32 = 0x000000FF
+                // Pure opaque black
                 for y in y0...y1 {
-                    let rowOffset = y * width
+                    let rowOffset = y * width * 4
                     for x in x0...x1 {
-                        pixels[rowOffset + x] = blackPixel
+                        let p = rowOffset + x * 4
+                        pixelBytes[p + 0] = 0   // R
+                        pixelBytes[p + 1] = 0   // G
+                        pixelBytes[p + 2] = 0   // B
+                        pixelBytes[p + 3] = 255 // A
                     }
                 }
             } else {
-                // Randomized non-spatial mosaic pixelation
+                // Mosaic pixelation averaging actual underlying pixels
                 let blockSize = max(8, Int(round(12.0 * scale)))
                 for by in stride(from: y0, through: y1, by: blockSize) {
                     for bx in stride(from: x0, through: x1, by: blockSize) {
@@ -181,24 +187,27 @@ public enum RenderPipeline {
                         // Compute average color in block
                         var totalR = 0, totalG = 0, totalB = 0, count = 0
                         for py in by...byEnd {
-                            let rOff = py * width
+                            let rOff = py * width * 4
                             for px in bx...bxEnd {
-                                let c = pixels[rOff + px]
-                                totalR += Int((c >> 24) & 0xff)
-                                totalG += Int((c >> 16) & 0xff)
-                                totalB += Int((c >> 8) & 0xff)
+                                let p = rOff + px * 4
+                                totalR += Int(pixelBytes[p + 0])
+                                totalG += Int(pixelBytes[p + 1])
+                                totalB += Int(pixelBytes[p + 2])
                                 count += 1
                             }
                         }
                         if count > 0 {
-                            let avgR = UInt32(totalR / count)
-                            let avgG = UInt32(totalG / count)
-                            let avgB = UInt32(totalB / count)
-                            let avgPixel = (avgR << 24) | (avgG << 16) | (avgB << 8) | 0xff
+                            let avgR = UInt8(totalR / count)
+                            let avgG = UInt8(totalG / count)
+                            let avgB = UInt8(totalB / count)
                             for py in by...byEnd {
-                                let rOff = py * width
+                                let rOff = py * width * 4
                                 for px in bx...bxEnd {
-                                    pixels[rOff + px] = avgPixel
+                                    let p = rOff + px * 4
+                                    pixelBytes[p + 0] = avgR
+                                    pixelBytes[p + 1] = avgG
+                                    pixelBytes[p + 2] = avgB
+                                    pixelBytes[p + 3] = 255
                                 }
                             }
                         }
