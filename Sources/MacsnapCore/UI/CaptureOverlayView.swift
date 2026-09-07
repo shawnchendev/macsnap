@@ -90,6 +90,12 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     private var activeSnapLock: TextBand? = nil
     private var liveCutBand: (orientation: CutOrientation, start: Double, end: Double)? = nil
     private var activeHandle: InteractionHandle? = nil
+    public var initialCaptureSelection: CGRect = .zero
+    private var hoveredCropHandleIndex: Int? = nil
+    private var cropDragStartMouse: CGPoint = .zero
+    private var initialSelectionBeforeCrop: CGRect = .zero
+    private var initialAnnotationsBeforeCrop: [Annotation] = []
+    private var cropScaleFactor: CGFloat = 1.0
 
     // Annotation Drag & Move
     private var isDraggingAnnotation: Bool = false
@@ -120,7 +126,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     public var stitcher: Stitcher? = nil
     private var scrollTimer: Timer? = nil
 
-    public enum InteractionHandle {
+    public enum InteractionHandle: Equatable {
         case move
         case resizeStart
         case resizeEnd
@@ -396,6 +402,13 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         if let msg = ocrStatusMessage {
             drawStatusToast(in: context, message: msg, screenBounds: bounds)
         }
+
+        // 9. Measurement readout when dragging crop handle
+        if case .cropHandle = activeHandle {
+            let nativeW = Int(round(selection.width * effectiveScale))
+            let nativeH = Int(round(selection.height * effectiveScale))
+            MeasurementReadout.drawReadout(in: context, at: currentMousePoint, text: "\(nativeW) × \(nativeH) px", screenBounds: bounds)
+        }
     }
 
     private func drawLiveToolPreview(in context: CGContext, targetRect: CGRect) {
@@ -590,34 +603,154 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         }
     }
 
-    private func drawCropHandles(in context: CGContext, targetRect: CGRect) {
-        let baseSize = selection.isEmpty ? self.bounds.size : selection.size
+    public func cropHandleRects() -> [CGRect] {
+        let maxW = CGFloat(pristineSource.width) / effectiveScale
+        let maxH = CGFloat(pristineSource.height) / effectiveScale
+        let baseSize = selection.isEmpty ? CGSize(width: maxW, height: maxH) : selection.size
         let cardP1 = toScreenPoint(CGPoint(x: 0, y: 0))
         let cardP2 = toScreenPoint(CGPoint(x: baseSize.width, y: baseSize.height))
-        let cardRect = CGRect(x: min(cardP1.x, cardP2.x), y: min(cardP1.y, cardP2.y), width: abs(cardP2.x - cardP1.x), height: abs(cardP2.y - cardP1.y))
+        let cardRect = CGRect(
+            x: min(cardP1.x, cardP2.x),
+            y: min(cardP1.y, cardP2.y),
+            width: abs(cardP2.x - cardP1.x),
+            height: abs(cardP2.y - cardP1.y)
+        )
 
-        let handleSize: CGFloat = 8.0
+        let handleSize: CGFloat = 10.0
         let pts: [CGPoint] = [
-            CGPoint(x: cardRect.minX, y: cardRect.minY),
-            CGPoint(x: cardRect.midX, y: cardRect.minY),
-            CGPoint(x: cardRect.maxX, y: cardRect.minY),
-            CGPoint(x: cardRect.maxX, y: cardRect.midY),
-            CGPoint(x: cardRect.maxX, y: cardRect.maxY),
-            CGPoint(x: cardRect.midX, y: cardRect.maxY),
-            CGPoint(x: cardRect.minX, y: cardRect.maxY),
-            CGPoint(x: cardRect.minX, y: cardRect.midY)
+            CGPoint(x: cardRect.minX, y: cardRect.minY), // 0: Top-Left
+            CGPoint(x: cardRect.midX, y: cardRect.minY), // 1: Top-Mid
+            CGPoint(x: cardRect.maxX, y: cardRect.minY), // 2: Top-Right
+            CGPoint(x: cardRect.maxX, y: cardRect.midY), // 3: Mid-Right
+            CGPoint(x: cardRect.maxX, y: cardRect.maxY), // 4: Bottom-Right
+            CGPoint(x: cardRect.midX, y: cardRect.maxY), // 5: Bottom-Mid
+            CGPoint(x: cardRect.minX, y: cardRect.maxY), // 6: Bottom-Left
+            CGPoint(x: cardRect.minX, y: cardRect.midY)  // 7: Mid-Left
         ]
 
+        return pts.map { pt in
+            CGRect(x: pt.x - handleSize / 2.0, y: pt.y - handleSize / 2.0, width: handleSize, height: handleSize)
+        }
+    }
+
+    public func cropHandleIndex(at point: CGPoint) -> Int? {
+        let rects = cropHandleRects()
+        for (i, r) in rects.enumerated() {
+            if r.insetBy(dx: -6, dy: -6).contains(point) {
+                return i
+            }
+        }
+        return nil
+    }
+
+    public func cursorForCropHandle(_ index: Int) -> NSCursor {
+        switch index {
+        case 0, 4: // Top-left or bottom-right
+            let sel = Selector(("_windowResizeNorthWestSouthEastCursor"))
+            if NSCursor.responds(to: sel), let c = NSCursor.perform(sel)?.takeUnretainedValue() as? NSCursor {
+                return c
+            }
+            return .crosshair
+        case 2, 6: // Top-right or bottom-left
+            let sel = Selector(("_windowResizeNorthEastSouthWestCursor"))
+            if NSCursor.responds(to: sel), let c = NSCursor.perform(sel)?.takeUnretainedValue() as? NSCursor {
+                return c
+            }
+            return .crosshair
+        case 1, 5: // Top-mid or bottom-mid
+            return .resizeUpDown
+        case 3, 7: // Mid-right or mid-left
+            return .resizeLeftRight
+        default:
+            return .arrow
+        }
+    }
+
+    private func drawCropHandles(in context: CGContext, targetRect: CGRect) {
+        let rects = cropHandleRects()
+
         context.saveGState()
-        for pt in pts {
-            let rect = CGRect(x: pt.x - handleSize / 2.0, y: pt.y - handleSize / 2.0, width: handleSize, height: handleSize)
-            context.setFillColor(NSColor.white.cgColor)
-            context.fill(rect)
-            context.setStrokeColor(NSColor.systemBlue.cgColor)
+        for (i, rect) in rects.enumerated() {
+            let isHoveredOrActive = (i == hoveredCropHandleIndex) || (activeHandle == .cropHandle(i))
+
+            context.setShadow(offset: CGSize(width: 0, height: 1), blur: 3, color: NSColor(white: 0, alpha: 0.45).cgColor)
+
+            let path = CGPath(rect: rect, transform: nil)
+            context.addPath(path)
+            if isHoveredOrActive {
+                context.setFillColor(NSColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 1.0).cgColor)
+            } else {
+                context.setFillColor(NSColor.white.cgColor)
+            }
+            context.fillPath()
+
+            context.setShadow(offset: .zero, blur: 0, color: nil)
+            context.addPath(path)
+            context.setStrokeColor(NSColor(red: 0.05, green: 0.40, blue: 0.95, alpha: 1.0).cgColor)
             context.setLineWidth(1.5)
-            context.stroke(rect)
+            context.strokePath()
         }
         context.restoreGState()
+    }
+
+    private func handleCropDrag(handleIndex: Int) {
+        let initSel = initialSelectionBeforeCrop
+        let maxW = CGFloat(pristineSource.width) / effectiveScale
+        let maxH = CGFloat(pristineSource.height) / effectiveScale
+
+        let deltaScreenX = currentMousePoint.x - cropDragStartMouse.x
+        let deltaScreenY = currentMousePoint.y - cropDragStartMouse.y
+        let deltaX = deltaScreenX * cropScaleFactor
+        let deltaY = deltaScreenY * cropScaleFactor
+
+        var newMinX = initSel.minX
+        var newMaxX = initSel.maxX
+        var newMinY = initSel.minY
+        var newMaxY = initSel.maxY
+
+        // Horizontal resizing
+        switch handleIndex {
+        case 0, 6, 7: // Left edge / corners
+            let candidate = initSel.minX + deltaX
+            newMinX = max(0.0, min(initSel.maxX - 20.0, candidate))
+        case 2, 3, 4: // Right edge / corners
+            let candidate = initSel.maxX + deltaX
+            newMaxX = max(initSel.minX + 20.0, min(maxW, candidate))
+        default:
+            break
+        }
+
+        // Vertical resizing
+        switch handleIndex {
+        case 0, 1, 2: // Top edge / corners
+            let candidate = initSel.minY + deltaY
+            newMinY = max(0.0, min(initSel.maxY - 20.0, candidate))
+        case 4, 5, 6: // Bottom edge / corners
+            let candidate = initSel.maxY + deltaY
+            newMaxY = max(initSel.minY + 20.0, min(maxH, candidate))
+        default:
+            break
+        }
+
+        let newSelection = CGRect(x: newMinX, y: newMinY, width: newMaxX - newMinX, height: newMaxY - newMinY)
+        let shiftX = newMinX - initSel.minX
+        let shiftY = newMinY - initSel.minY
+
+        if shiftX != 0 || shiftY != 0 {
+            self.activeAnnotations = initialAnnotationsBeforeCrop.map { ann in
+                var updated = ann
+                updated.start = CGPoint(x: ann.start.x - shiftX, y: ann.start.y - shiftY)
+                updated.end = CGPoint(x: ann.end.x - shiftX, y: ann.end.y - shiftY)
+                if !ann.points.isEmpty {
+                    updated.points = ann.points.map { CGPoint(x: $0.x - shiftX, y: $0.y - shiftY) }
+                }
+                return updated
+            }
+        } else {
+            self.activeAnnotations = initialAnnotationsBeforeCrop
+        }
+        self.selection = newSelection
+        self.activeCrop = newSelection
     }
 
     private func drawSelectedAnnotationChrome(in context: CGContext) {
@@ -885,16 +1018,23 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 )
             }
 
-            // Update cursor based on hover over annotations
-            if tool == .select || tool == .text {
-                let annPt = toAnnotationPoint(currentMousePoint)
-                if activeAnnotations.contains(where: { $0.bounds.insetBy(dx: -4, dy: -4).contains(annPt) }) {
-                    NSCursor.openHand.set()
+            // 1. Check if hovering over any crop handle
+            if let handleIdx = cropHandleIndex(at: currentMousePoint) {
+                hoveredCropHandleIndex = handleIdx
+                cursorForCropHandle(handleIdx).set()
+            } else {
+                hoveredCropHandleIndex = nil
+                // 2. Update cursor based on hover over annotations
+                if tool == .select || tool == .text {
+                    let annPt = toAnnotationPoint(currentMousePoint)
+                    if activeAnnotations.contains(where: { $0.bounds.insetBy(dx: -4, dy: -4).contains(annPt) }) {
+                        NSCursor.openHand.set()
+                    } else {
+                        NSCursor.arrow.set()
+                    }
                 } else {
                     NSCursor.arrow.set()
                 }
-            } else {
-                NSCursor.arrow.set()
             }
         }
         needsDisplay = true
@@ -959,6 +1099,22 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             // Commit active inline text field if clicking outside
             if activeInlineTextField != nil {
                 commitActiveTextEditing()
+            }
+
+            // Check Crop Handle click
+            if let handleIdx = cropHandleIndex(at: dragStart) {
+                activeHandle = .cropHandle(handleIdx)
+                cropDragStartMouse = dragStart
+                let maxW = CGFloat(pristineSource.width) / effectiveScale
+                let maxH = CGFloat(pristineSource.height) / effectiveScale
+                initialSelectionBeforeCrop = selection.isEmpty ? CGRect(x: 0, y: 0, width: maxW, height: maxH) : selection
+                initialAnnotationsBeforeCrop = activeAnnotations
+                let imgRect = imageRectOnScreen()
+                let canvas = currentCanvasRect()
+                cropScaleFactor = max(1.0, canvas.width) / max(1.0, imgRect.width)
+                cursorForCropHandle(handleIdx).set()
+                needsDisplay = true
+                return
             }
 
             let annPt = toAnnotationPoint(dragStart)
@@ -1031,6 +1187,14 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             let maxY = max(dragStart.y, currentMousePoint.y)
             selection = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         } else {
+            // Check if dragging a crop handle
+            if case .cropHandle(let handleIdx) = activeHandle {
+                handleCropDrag(handleIndex: handleIdx)
+                cursorForCropHandle(handleIdx).set()
+                needsDisplay = true
+                return
+            }
+
             let annPt = toAnnotationPoint(currentMousePoint)
 
             if isDraggingAnnotation {
@@ -1076,6 +1240,18 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             }
         } else {
             // Edit phase commit drag
+            if case .cropHandle = activeHandle {
+                activeHandle = nil
+                hoveredCropHandleIndex = nil
+                opLog.previewWidth = Int(selection.width)
+                opLog.previewHeight = Int(selection.height)
+                if selection != initialSelectionBeforeCrop {
+                    recordOp(Operation(type: .crop, crop: selection))
+                }
+                needsDisplay = true
+                return
+            }
+
             if isDraggingAnnotation {
                 isDraggingAnnotation = false
                 let endAnn = toAnnotationPoint(currentMousePoint)
@@ -1364,6 +1540,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             return
         }
         phase = .edit
+        initialCaptureSelection = selection
         opLog.previewWidth = Int(selection.width)
         opLog.previewHeight = Int(selection.height)
         needsDisplay = true
@@ -1682,6 +1859,13 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
     private func replayState() {
         let state = opLog.replay()
+        if state.crop != .zero {
+            self.selection = state.crop
+            self.activeCrop = state.crop
+        } else if initialCaptureSelection != .zero {
+            self.selection = initialCaptureSelection
+            self.activeCrop = initialCaptureSelection
+        }
         self.activeAnnotations = state.annotations
         self.activeCuts = state.cuts
         self.backdropStyle = state.backgroundStyle
