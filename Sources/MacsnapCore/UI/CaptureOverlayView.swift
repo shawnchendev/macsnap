@@ -126,6 +126,16 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     public var stitcher: Stitcher? = nil
     private var scrollTimer: Timer? = nil
 
+    /// Y origin for the capture-mode tab bar, shifted above the camera notch when present.
+    private var captureTabsOriginY: CGFloat {
+        if let screen = NSScreen.main {
+            let inset = screen.safeAreaInsets.top
+            if inset > 0 { return inset + 12 }
+            if screen.auxiliaryTopLeftArea != nil { return 32.0 + 12 }
+        }
+        return 16.0
+    }
+
     public enum InteractionHandle: Equatable {
         case move
         case resizeStart
@@ -309,7 +319,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         let tabH: CGFloat = 32.0
         let tabW: CGFloat = 110.0
         let totalW = tabW * CGFloat(kinds.count)
-        let barRect = CGRect(x: self.bounds.midX - totalW / 2.0, y: 16, width: totalW, height: tabH)
+        let barRect = CGRect(x: self.bounds.midX - totalW / 2.0, y: captureTabsOriginY, width: totalW, height: tabH)
 
         context.saveGState()
 
@@ -1551,7 +1561,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         let tabH: CGFloat = 32.0
         let tabW: CGFloat = 110.0
         let totalW = tabW * CGFloat(kinds.count)
-        let barRect = CGRect(x: self.bounds.midX - totalW / 2.0, y: 16, width: totalW, height: tabH)
+        let barRect = CGRect(x: self.bounds.midX - totalW / 2.0, y: captureTabsOriginY, width: totalW, height: tabH)
         guard barRect.contains(point) else { return nil }
 
         let relX = point.x - barRect.minX
