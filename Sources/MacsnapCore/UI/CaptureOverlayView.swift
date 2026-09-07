@@ -67,7 +67,7 @@ public final class CaptureOverlayView: NSView {
     public var activeCrop: CGRect = .zero
     public var backdropStyle: BackdropStyle = .none
     public var imageShadow: Bool = true
-    public var canvasBoundaryMode: CanvasBoundaryMode = .framed
+    public var canvasBoundaryMode: CanvasBoundaryMode = .image
     public var selectedAnnotationIndices: Set<Int> = []
     public var nextMarker: Int = 1
 
@@ -123,6 +123,7 @@ public final class CaptureOverlayView: NSView {
         self.pristineSource = captureData.image
         self.appConfig = appConfig
         self.backdropStyle = appConfig.defaultBackdropStyle
+        self.canvasBoundaryMode = (appConfig.defaultBackdropStyle == .none || appConfig.defaultBackdropStyle == .off) ? .image : .framed
         super.init(frame: NSRect(origin: .zero, size: captureData.screenBounds.size))
 
         self.wantsLayer = true
@@ -149,21 +150,31 @@ public final class CaptureOverlayView: NSView {
         captureData.scaleFactor
     }
 
+    public func currentCanvasRect() -> CGRect {
+        let baseSize = selection.isEmpty ? self.bounds.size : selection.size
+        return RenderPipeline.computeCanvasRect(
+            baseSize: baseSize,
+            annotations: activeAnnotations,
+            boundaryMode: canvasBoundaryMode,
+            backdropStyle: backdropStyle
+        )
+    }
+
     public func imageRectOnScreen() -> CGRect {
         if phase == .select {
             return self.bounds
         }
-        // In Edit phase, fit selection or canvas into screen with margins
-        let baseSize = selection.isEmpty ? self.bounds.size : selection.size
+        // In Edit phase, fit canvas into screen with margins
+        let canvas = currentCanvasRect()
         let marginX: CGFloat = 80.0
         let topMargin: CGFloat = 70.0 // space for floating top toolbar
         let bottomMargin: CGFloat = 30.0
         let availW = self.bounds.width - marginX * 2
         let availH = self.bounds.height - (topMargin + bottomMargin)
 
-        let scale = min(availW / max(1, baseSize.width), availH / max(1, baseSize.height), 1.0) * viewZoom
-        let drawW = baseSize.width * scale
-        let drawH = baseSize.height * scale
+        let scale = min(availW / max(1, canvas.width), availH / max(1, canvas.height), 1.0) * viewZoom
+        let drawW = canvas.width * scale
+        let drawH = canvas.height * scale
         let drawX = (self.bounds.width - drawW) / 2.0 + viewOffset.x
         let drawY = topMargin + (availH - drawH) / 2.0 + viewOffset.y
         return CGRect(x: drawX, y: drawY, width: drawW, height: drawH)
@@ -171,16 +182,18 @@ public final class CaptureOverlayView: NSView {
 
     public func toAnnotationPoint(_ screenPoint: CGPoint) -> CGPoint {
         let imgRect = imageRectOnScreen()
+        let canvas = currentCanvasRect()
         guard imgRect.width > 0, imgRect.height > 0 else { return screenPoint }
-        let relX = (screenPoint.x - imgRect.minX) / (imgRect.width / max(1, selection.width))
-        let relY = (screenPoint.y - imgRect.minY) / (imgRect.height / max(1, selection.height))
+        let relX = canvas.minX + (screenPoint.x - imgRect.minX) / (imgRect.width / max(1, canvas.width))
+        let relY = canvas.minY + (screenPoint.y - imgRect.minY) / (imgRect.height / max(1, canvas.height))
         return CGPoint(x: relX, y: relY)
     }
 
     public func toScreenPoint(_ annPoint: CGPoint) -> CGPoint {
         let imgRect = imageRectOnScreen()
-        let screenX = imgRect.minX + annPoint.x * (imgRect.width / max(1, selection.width))
-        let screenY = imgRect.minY + annPoint.y * (imgRect.height / max(1, selection.height))
+        let canvas = currentCanvasRect()
+        let screenX = imgRect.minX + (annPoint.x - canvas.minX) * (imgRect.width / max(1, canvas.width))
+        let screenY = imgRect.minY + (annPoint.y - canvas.minY) * (imgRect.height / max(1, canvas.height))
         return CGPoint(x: screenX, y: screenY)
     }
 
@@ -387,19 +400,145 @@ public final class CaptureOverlayView: NSView {
             context.strokePath()
             context.restoreGState()
         }
+
+        // Live rubber-band vector preview
+        if isMouseDown && phase == .edit {
+            let color = NSColor(hex: activeColorHex) ?? NSColor(calibratedRed: 1.0, green: 0.22, blue: 0.37, alpha: 1.0)
+            context.saveGState()
+            context.setStrokeColor(color.cgColor)
+            context.setFillColor(color.cgColor)
+            context.setLineWidth(strokeSize)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+
+            switch tool {
+            case .arrow:
+                RenderPipeline.drawArrow(in: context, from: dragStart, to: currentMousePoint, width: strokeSize)
+
+            case .line:
+                context.move(to: dragStart)
+                context.addLine(to: currentMousePoint)
+                context.strokePath()
+
+            case .rectangle:
+                let r = CGRect(
+                    x: min(dragStart.x, currentMousePoint.x),
+                    y: min(dragStart.y, currentMousePoint.y),
+                    width: abs(currentMousePoint.x - dragStart.x),
+                    height: abs(currentMousePoint.y - dragStart.y)
+                )
+                if cornerRadius > 0 {
+                    let path = CGPath(roundedRect: r, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+                    context.addPath(path)
+                } else {
+                    context.addRect(r)
+                }
+                if shapeFilled {
+                    context.fillPath()
+                } else {
+                    context.strokePath()
+                }
+
+            case .ellipse:
+                let r = CGRect(
+                    x: min(dragStart.x, currentMousePoint.x),
+                    y: min(dragStart.y, currentMousePoint.y),
+                    width: abs(currentMousePoint.x - dragStart.x),
+                    height: abs(currentMousePoint.y - dragStart.y)
+                )
+                if shapeFilled {
+                    context.fillEllipse(in: r)
+                } else {
+                    context.strokeEllipse(in: r)
+                }
+
+            case .freehand:
+                if activeFreehandPoints.count > 1 {
+                    let p0 = toScreenPoint(activeFreehandPoints[0])
+                    context.move(to: p0)
+                    for pt in activeFreehandPoints.dropFirst() {
+                        context.addLine(to: toScreenPoint(pt))
+                    }
+                    context.strokePath()
+                }
+
+            case .highlighter:
+                if highlighterMode == .normal {
+                    let highColor = color.withAlphaComponent(0.38)
+                    context.setStrokeColor(highColor.cgColor)
+                    context.setLineWidth(strokeSize * 3.5)
+                    context.setLineCap(.square)
+                    if activeFreehandPoints.count > 1 {
+                        let p0 = toScreenPoint(activeFreehandPoints[0])
+                        context.move(to: p0)
+                        for pt in activeFreehandPoints.dropFirst() {
+                            context.addLine(to: toScreenPoint(pt))
+                        }
+                        context.strokePath()
+                    } else {
+                        context.move(to: dragStart)
+                        context.addLine(to: currentMousePoint)
+                        context.strokePath()
+                    }
+                }
+
+            case .redact:
+                let r = CGRect(
+                    x: min(dragStart.x, currentMousePoint.x),
+                    y: min(dragStart.y, currentMousePoint.y),
+                    width: abs(currentMousePoint.x - dragStart.x),
+                    height: abs(currentMousePoint.y - dragStart.y)
+                )
+                context.setFillColor(NSColor(calibratedWhite: 0.1, alpha: 0.45).cgColor)
+                context.fill(r)
+                context.setStrokeColor(NSColor.white.cgColor)
+                context.setLineDash(phase: 0, lengths: [4, 4])
+                context.setLineWidth(1.5)
+                context.stroke(r)
+
+            case .spotlight:
+                let r = CGRect(
+                    x: min(dragStart.x, currentMousePoint.x),
+                    y: min(dragStart.y, currentMousePoint.y),
+                    width: abs(currentMousePoint.x - dragStart.x),
+                    height: abs(currentMousePoint.y - dragStart.y)
+                )
+                context.setStrokeColor(color.cgColor)
+                context.setLineWidth(max(2.0, strokeSize))
+                switch spotlightShape {
+                case .ellipse:
+                    context.strokeEllipse(in: r)
+                case .rectangle:
+                    context.stroke(r)
+                case .rounded:
+                    let path = CGPath(roundedRect: r, cornerWidth: 8, cornerHeight: 8, transform: nil)
+                    context.addPath(path)
+                    context.strokePath()
+                }
+
+            default:
+                break
+            }
+            context.restoreGState()
+        }
     }
 
     private func drawCropHandles(in context: CGContext, targetRect: CGRect) {
+        let baseSize = selection.isEmpty ? self.bounds.size : selection.size
+        let cardP1 = toScreenPoint(CGPoint(x: 0, y: 0))
+        let cardP2 = toScreenPoint(CGPoint(x: baseSize.width, y: baseSize.height))
+        let cardRect = CGRect(x: min(cardP1.x, cardP2.x), y: min(cardP1.y, cardP2.y), width: abs(cardP2.x - cardP1.x), height: abs(cardP2.y - cardP1.y))
+
         let handleSize: CGFloat = 8.0
         let pts: [CGPoint] = [
-            CGPoint(x: targetRect.minX, y: targetRect.minY),
-            CGPoint(x: targetRect.midX, y: targetRect.minY),
-            CGPoint(x: targetRect.maxX, y: targetRect.minY),
-            CGPoint(x: targetRect.maxX, y: targetRect.midY),
-            CGPoint(x: targetRect.maxX, y: targetRect.maxY),
-            CGPoint(x: targetRect.midX, y: targetRect.maxY),
-            CGPoint(x: targetRect.minX, y: targetRect.maxY),
-            CGPoint(x: targetRect.minX, y: targetRect.midY)
+            CGPoint(x: cardRect.minX, y: cardRect.minY),
+            CGPoint(x: cardRect.midX, y: cardRect.minY),
+            CGPoint(x: cardRect.maxX, y: cardRect.minY),
+            CGPoint(x: cardRect.maxX, y: cardRect.midY),
+            CGPoint(x: cardRect.maxX, y: cardRect.maxY),
+            CGPoint(x: cardRect.midX, y: cardRect.maxY),
+            CGPoint(x: cardRect.minX, y: cardRect.maxY),
+            CGPoint(x: cardRect.minX, y: cardRect.midY)
         ]
 
         context.saveGState()
@@ -582,7 +721,7 @@ public final class CaptureOverlayView: NSView {
                 let dy = abs(annPt.y - startPt.y)
                 let orient: CutOrientation = dx > dy ? .vertical : .horizontal
                 liveCutBand = (orientation: orient, start: orient == .horizontal ? min(startPt.y, annPt.y) : min(startPt.x, annPt.x), end: orient == .horizontal ? max(startPt.y, annPt.y) : max(startPt.x, annPt.x))
-            } else if tool == .freehand || tool == .highlighter {
+            } else if tool == .freehand || (tool == .highlighter && highlighterMode == .normal) {
                 activeFreehandPoints.append(annPt)
             }
         }
@@ -603,93 +742,111 @@ public final class CaptureOverlayView: NSView {
             // Edit phase commit drag
             let startAnn = toAnnotationPoint(dragStart)
             let endAnn = toAnnotationPoint(currentMousePoint)
+            let dragDist = hypot(endAnn.x - startAnn.x, endAnn.y - startAnn.y)
+            let dragDim = max(abs(endAnn.x - startAnn.x), abs(endAnn.y - startAnn.y))
 
             if tool == .cut, let cut = liveCutBand {
                 applyCut(cut)
                 liveCutBand = nil
             } else if tool == .arrow {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .arrow,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize
-                ))
+                if dragDist >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .arrow,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize
+                    ))
+                }
             } else if tool == .line {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .line,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize
-                ))
+                if dragDist >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .line,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize
+                    ))
+                }
             } else if tool == .freehand {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .freehand,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    points: activeFreehandPoints
-                ))
+                if activeFreehandPoints.count > 1 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .freehand,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        points: activeFreehandPoints
+                    ))
+                }
                 activeFreehandPoints.removeAll()
             } else if tool == .highlighter {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .highlighter,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    points: activeFreehandPoints
-                ))
+                if activeFreehandPoints.count > 1 || dragDist >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .highlighter,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        points: activeFreehandPoints
+                    ))
+                }
                 activeFreehandPoints.removeAll()
             } else if tool == .rectangle {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .rectangle,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    filled: shapeFilled,
-                    cornerRadius: cornerRadius
-                ))
+                if dragDim >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .rectangle,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        filled: shapeFilled,
+                        cornerRadius: cornerRadius
+                    ))
+                }
             } else if tool == .ellipse {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .ellipse,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    filled: shapeFilled
-                ))
+                if dragDim >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .ellipse,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        filled: shapeFilled
+                    ))
+                }
             } else if tool == .redact {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .redaction,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    redactionStyle: redactionStyle,
-                    redactionSeed: UInt32.random(in: 0..<UInt32.max)
-                ))
+                if dragDim >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .redaction,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        redactionStyle: redactionStyle,
+                        redactionSeed: UInt32.random(in: 0..<UInt32.max)
+                    ))
+                }
             } else if tool == .spotlight {
-                commitAnnotation(Annotation(
-                    id: opLog.nextId,
-                    kind: .spotlight,
-                    start: startAnn,
-                    end: endAnn,
-                    colorHex: activeColorHex,
-                    size: strokeSize,
-                    magnification: spotlightZoom,
-                    spotlightShape: spotlightShape
-                ))
+                if dragDim >= 3.0 {
+                    commitAnnotation(Annotation(
+                        id: opLog.nextId,
+                        kind: .spotlight,
+                        start: startAnn,
+                        end: endAnn,
+                        colorHex: activeColorHex,
+                        size: strokeSize,
+                        magnification: spotlightZoom,
+                        spotlightShape: spotlightShape
+                    ))
+                }
             }
         }
         needsDisplay = true

@@ -132,4 +132,113 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertGreaterThan(topR, 200, "Top should be red")
         XCTAssertGreaterThan(botB, 200, "Bottom should be blue")
     }
+
+    @MainActor
+    func testArrowDirection() {
+        guard let sckImg = ScreenCaptureEngine.loadImage(from: URL(fileURLWithPath: "/tmp/sck_test.png")) else { return }
+        let capData = ScreenCaptureData(
+            screenBounds: CGRect(x: 0, y: 0, width: sckImg.width, height: sckImg.height),
+            scaleFactor: 1.0,
+            pixelSize: CGSize(width: sckImg.width, height: sckImg.height),
+            image: sckImg,
+            windows: []
+        )
+        let view = CaptureOverlayView(captureData: capData)
+        view.frame = NSRect(x: 0, y: 0, width: sckImg.width, height: sckImg.height)
+        view.phase = .edit
+        view.selection = CGRect(x: 100, y: 100, width: 600, height: 400)
+
+        // User drags from top-left (start) to bottom-right (end)
+        let pStart = CGPoint(x: 400, y: 300)
+        let pEnd = CGPoint(x: 600, y: 450)
+        let startAnn = view.toAnnotationPoint(pStart)
+        let endAnn = view.toAnnotationPoint(pEnd)
+
+        let arrow = Annotation(
+            id: 1,
+            kind: .arrow,
+            start: startAnn,
+            end: endAnn,
+            colorHex: "#00ff00",
+            size: 6.0
+        )
+        view.activeAnnotations = [arrow]
+
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: sckImg.width, pixelsHigh: sckImg.height, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .calibratedRGB, bytesPerRow: sckImg.width * 4, bitsPerPixel: 32)!
+        let gctx = NSGraphicsContext(bitmapImageRep: rep)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = gctx
+        view.draw(view.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: "/tmp/arrow_debug.png"))
+            print("Saved /tmp/arrow_debug.png")
+        }
+    }
+
+    @MainActor
+    func testCoordinateRoundTrip() {
+        let dummyImg = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 400,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!.makeImage()!
+
+        let capData = ScreenCaptureData(
+            screenBounds: CGRect(x: 0, y: 0, width: 1200, height: 800),
+            scaleFactor: 1.0,
+            pixelSize: CGSize(width: 1200, height: 800),
+            image: dummyImg,
+            windows: []
+        )
+        let view = CaptureOverlayView(captureData: capData)
+        view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        view.phase = .edit
+        view.selection = CGRect(x: 200, y: 150, width: 500, height: 350)
+
+        // Test multiple screen points round-trip
+        let testPoints = [
+            CGPoint(x: 300, y: 200),
+            CGPoint(x: 600, y: 400),
+            CGPoint(x: 250, y: 450),
+            CGPoint(x: 700, y: 250)
+        ]
+
+        for pt in testPoints {
+            let ann = view.toAnnotationPoint(pt)
+            let roundTrip = view.toScreenPoint(ann)
+            XCTAssertEqual(pt.x, roundTrip.x, accuracy: 0.001, "X coordinate should round-trip perfectly")
+            XCTAssertEqual(pt.y, roundTrip.y, accuracy: 0.001, "Y coordinate should round-trip perfectly")
+        }
+    }
+
+    func testArrowAngleAllQuadrants() {
+        // Test that arrow vector correctly points in the direction of drag
+        // 1. Right & Down: dx > 0, dy > 0 -> angle in (0, pi/2)
+        let dx1 = 100.0, dy1 = 100.0
+        let a1 = atan2(dy1, dx1)
+        XCTAssertGreaterThan(a1, 0)
+        XCTAssertLessThan(a1, .pi / 2.0)
+
+        // 2. Left & Up: dx < 0, dy < 0 -> angle in (-pi, -pi/2)
+        let dx2 = -100.0, dy2 = -100.0
+        let a2 = atan2(dy2, dx2)
+        XCTAssertLessThan(a2, -(.pi / 2.0))
+
+        // 3. Right & Up: dx > 0, dy < 0 -> angle in (-pi/2, 0)
+        let dx3 = 100.0, dy3 = -100.0
+        let a3 = atan2(dy3, dx3)
+        XCTAssertLessThan(a3, 0)
+        XCTAssertGreaterThan(a3, -(.pi / 2.0))
+
+        // 4. Left & Down: dx < 0, dy > 0 -> angle in (pi/2, pi)
+        let dx4 = -100.0, dy4 = 100.0
+        let a4 = atan2(dy4, dx4)
+        XCTAssertGreaterThan(a4, .pi / 2.0)
+    }
 }

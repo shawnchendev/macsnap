@@ -3,6 +3,26 @@ import CoreGraphics
 import Cocoa
 
 public enum RenderPipeline {
+    /// Computes the canvas bounding rect taking annotations and frame padding into account
+    public static func computeCanvasRect(
+        baseSize: CGSize,
+        annotations: [Annotation],
+        boundaryMode: CanvasBoundaryMode,
+        backdropStyle: BackdropStyle = .none
+    ) -> CGRect {
+        var canvasRect = CGRect(x: 0, y: 0, width: baseSize.width, height: baseSize.height)
+        if boundaryMode == .framed || boundaryMode == .overflow {
+            for ann in annotations {
+                canvasRect = canvasRect.union(ann.bounds)
+            }
+            if boundaryMode == .framed && (canvasRect != CGRect(x: 0, y: 0, width: baseSize.width, height: baseSize.height) || (backdropStyle != .none && backdropStyle != .off)) {
+                // Add padding frame
+                canvasRect = canvasRect.insetBy(dx: -48, dy: -48)
+            }
+        }
+        return canvasRect
+    }
+
     /// Pure rendering function: renders flattened CGImage for export or preview
     public static func renderCapture(
         source: CGImage,
@@ -35,17 +55,12 @@ public enum RenderPipeline {
         let baseHeight = cropHeight / scale
 
         // Calculate grown canvas
-        var canvasRect = CGRect(x: 0, y: 0, width: baseWidth, height: baseHeight)
-        if boundaryMode == .framed || boundaryMode == .overflow {
-            for ann in annotations {
-                let b = ann.bounds
-                canvasRect = canvasRect.union(b)
-            }
-            if boundaryMode == .framed && canvasRect != CGRect(x: 0, y: 0, width: baseWidth, height: baseHeight) {
-                // Add padding frame
-                canvasRect = canvasRect.insetBy(dx: -48, dy: -48)
-            }
-        }
+        let canvasRect = computeCanvasRect(
+            baseSize: CGSize(width: baseWidth, height: baseHeight),
+            annotations: annotations,
+            boundaryMode: boundaryMode,
+            backdropStyle: backdropStyle
+        )
 
         let outWidth = Int(ceil(canvasRect.width * scale))
         let outHeight = Int(ceil(canvasRect.height * scale))
@@ -350,7 +365,7 @@ public enum RenderPipeline {
         context.restoreGState()
     }
 
-    private static func drawArrow(in context: CGContext, from: CGPoint, to: CGPoint, width: CGFloat) {
+    public static func drawArrow(in context: CGContext, from: CGPoint, to: CGPoint, width: CGFloat) {
         let dx = to.x - from.x
         let dy = to.y - from.y
         let length = hypot(dx, dy)
