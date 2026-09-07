@@ -323,11 +323,18 @@ public enum RenderPipeline {
             context.fillEllipse(in: circleRect)
 
             let numStr = "\(annotation.number)"
-            let font = NSFont.systemFont(ofSize: radius * 1.05, weight: .bold)
-            let textColor = (color.brightnessComponent > 0.6) ? NSColor.black : NSColor.white
+            let fontSize = max(12.0, radius * 1.1)
+            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+            let rgbColor = color.usingColorSpace(.deviceRGB) ?? color
+            let luminance = rgbColor.redComponent * 0.299 + rgbColor.greenComponent * 0.587 + rgbColor.blueComponent * 0.114
+            let textColor = (luminance > 0.65) ? NSColor.black : NSColor.white
+
+            let para = NSMutableParagraphStyle()
+            para.alignment = .center
             let str = NSAttributedString(string: numStr, attributes: [
                 .font: font,
-                .foregroundColor: textColor
+                .foregroundColor: textColor,
+                .paragraphStyle: para
             ])
             let size = str.size()
             let strRect = CGRect(
@@ -336,7 +343,12 @@ public enum RenderPipeline {
                 width: size.width,
                 height: size.height
             )
+
+            NSGraphicsContext.saveGraphicsState()
+            let gctx = NSGraphicsContext(cgContext: context, flipped: true)
+            NSGraphicsContext.current = gctx
             str.draw(in: strRect)
+            NSGraphicsContext.restoreGraphicsState()
 
         case .rectangle:
             let rect = annotation.bounds

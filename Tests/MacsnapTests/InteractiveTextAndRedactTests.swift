@@ -174,4 +174,53 @@ final class InteractiveTextAndRedactTests: XCTestCase {
         XCTAssertGreaterThan(g, 150, "Green channel must remain high")
         XCTAssertGreaterThan(b, 150, "Blue channel must remain high")
     }
+
+    func testStepCounterRendersNumber() {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let ctx = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 400,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.setFillColor(CGColor(gray: 0.1, alpha: 1.0))
+        ctx.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let baseImg = ctx.makeImage()!
+
+        let marker = Annotation(
+            id: 1,
+            kind: .marker,
+            start: CGPoint(x: 50, y: 50),
+            end: CGPoint(x: 50, y: 50),
+            colorHex: "#ff375f",
+            size: 4.0,
+            number: 1
+        )
+
+        let rendered = RenderPipeline.renderCapture(
+            source: baseImg,
+            selection: CGRect(x: 0, y: 0, width: 100, height: 100),
+            annotations: [marker],
+            backdropStyle: .none,
+            imageShadow: false,
+            boundaryMode: .image,
+            scale: 1.0
+        )!
+
+        let data = rendered.dataProvider!.data! as Data
+        var whitePixels = 0
+        for i in stride(from: 0, to: data.count, by: 4) {
+            let r = data[i + 0]
+            let g = data[i + 1]
+            let b = data[i + 2]
+            if r > 220 && g > 220 && b > 220 {
+                whitePixels += 1
+            }
+        }
+
+        XCTAssertGreaterThan(whitePixels, 20, "Step counter must render visible white number pixels inside the marker badge")
+    }
 }
