@@ -96,4 +96,40 @@ final class RenderPipelineTests: XCTestCase {
         XCTAssertGreaterThan(rendered!.width, 0)
         XCTAssertGreaterThan(rendered!.height, 0)
     }
+
+    func testImageOrientation() {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let context = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 400,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        )!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 50, width: 100, height: 50))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 50))
+        let src = context.makeImage()!
+
+        let rendered = RenderPipeline.renderCapture(
+            source: src,
+            selection: CGRect(x: 0, y: 0, width: 100, height: 100),
+            annotations: [],
+            backdropStyle: .none,
+            imageShadow: false,
+            boundaryMode: .image,
+            scale: 1.0
+        )!
+
+        let data = rendered.dataProvider!.data!
+        let ptr = CFDataGetBytePtr(data)!
+        let topR = ptr[20 * rendered.bytesPerRow]
+        let botB = ptr[80 * rendered.bytesPerRow + 2]
+
+        XCTAssertGreaterThan(topR, 200, "Top should be red")
+        XCTAssertGreaterThan(botB, 200, "Bottom should be blue")
+    }
 }

@@ -62,6 +62,10 @@ public enum RenderPipeline {
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
               ) else { return nil }
 
+        // Flip context to top-left coordinate system (y = 0 at top)
+        context.translateBy(x: 0, y: CGFloat(outHeight))
+        context.scaleBy(x: 1.0, y: -1.0)
+
         // Scale context to export pixels
         context.scaleBy(x: scale, y: scale)
         // Translate so canvas origin is at (0, 0)
@@ -146,7 +150,7 @@ public enum RenderPipeline {
                 // Pure black
                 let blackPixel: UInt32 = 0x000000FF
                 for y in y0...y1 {
-                    let rowOffset = (height - 1 - y) * width
+                    let rowOffset = y * width
                     for x in x0...x1 {
                         pixels[rowOffset + x] = blackPixel
                     }
@@ -162,7 +166,7 @@ public enum RenderPipeline {
                         // Compute average color in block
                         var totalR = 0, totalG = 0, totalB = 0, count = 0
                         for py in by...byEnd {
-                            let rOff = (height - 1 - py) * width
+                            let rOff = py * width
                             for px in bx...bxEnd {
                                 let c = pixels[rOff + px]
                                 totalR += Int((c >> 24) & 0xff)
@@ -177,7 +181,7 @@ public enum RenderPipeline {
                             let avgB = UInt32(totalB / count)
                             let avgPixel = (avgR << 24) | (avgG << 16) | (avgB << 8) | 0xff
                             for py in by...byEnd {
-                                let rOff = (height - 1 - py) * width
+                                let rOff = py * width
                                 for px in bx...bxEnd {
                                     pixels[rOff + px] = avgPixel
                                 }
@@ -226,12 +230,12 @@ public enum RenderPipeline {
             let drawW = baseSize.width * mag
             let drawH = baseSize.height * mag
             let drawX = center.x - (center.x * mag)
-            let drawY = center.y - ((baseSize.height - center.y) * mag)
+            let drawY = center.y - (center.y * mag)
 
             context.saveGState()
-            context.translateBy(x: 0, y: baseSize.height)
+            context.translateBy(x: drawX, y: drawY + drawH)
             context.scaleBy(x: 1.0, y: -1.0)
-            context.draw(baseImage, in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
+            context.draw(baseImage, in: CGRect(x: 0, y: 0, width: drawW, height: drawH))
             context.restoreGState()
 
             context.restoreGState()
@@ -415,6 +419,9 @@ public enum RenderPipeline {
             context.fillPath()
             context.restoreGState()
         } else if annotation.textBackground == .outline {
+            NSGraphicsContext.saveGraphicsState()
+            let gctx = NSGraphicsContext(cgContext: context, flipped: true)
+            NSGraphicsContext.current = gctx
             let outlineStr = NSAttributedString(string: annotation.text, attributes: [
                 .font: font,
                 .foregroundColor: NSColor.white,
@@ -423,8 +430,13 @@ public enum RenderPipeline {
                 .paragraphStyle: para
             ])
             outlineStr.draw(at: annotation.start)
+            NSGraphicsContext.restoreGraphicsState()
         }
 
+        NSGraphicsContext.saveGraphicsState()
+        let gctx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.current = gctx
         attrStr.draw(at: annotation.start)
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
