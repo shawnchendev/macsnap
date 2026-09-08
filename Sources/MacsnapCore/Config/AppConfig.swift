@@ -7,6 +7,9 @@ public struct AppConfig: Sendable {
     public var backgroundImagePath: String?
     public var defaultBackdropStyle: BackdropStyle
     public var recentDirectory: String
+    /// Global hotkeys by action ("region", "window", "scroll", "fullscreen").
+    /// Absent key = unassigned.
+    public var hotkeys: [String: HotkeyBinding]
 
     public init(
         outputDirectory: String = "~/Pictures/Screenshots",
@@ -14,7 +17,8 @@ public struct AppConfig: Sendable {
         palette: PaletteConfig = PaletteConfig(),
         backgroundImagePath: String? = nil,
         defaultBackdropStyle: BackdropStyle = .none,
-        recentDirectory: String = "~/.local/state/macsnap/recent"
+        recentDirectory: String = "~/.local/state/macsnap/recent",
+        hotkeys: [String: HotkeyBinding] = [:]
     ) {
         self.outputDirectory = outputDirectory
         self.filenamePattern = filenamePattern
@@ -22,6 +26,7 @@ public struct AppConfig: Sendable {
         self.backgroundImagePath = backgroundImagePath
         self.defaultBackdropStyle = defaultBackdropStyle
         self.recentDirectory = recentDirectory
+        self.hotkeys = hotkeys
     }
 
     public static func load() -> AppConfig {
@@ -101,10 +106,71 @@ public struct AppConfig: Sendable {
                         defaultBackdropStyle = style
                     }
                 }
+            case "hotkeys":
+                if HotkeyManager.Action(rawValue: key) != nil,
+                   let binding = HotkeyBinding.parse(value) {
+                    hotkeys[key] = binding
+                }
             default:
                 break
             }
         }
+    }
+
+    public static func configFilePath(home: String? = nil) -> String {
+        let base = home ?? FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(base)/.config/macsnap/macsnap.conf"
+    }
+
+    /// Renders the full INI file (all known settings, including hotkeys).
+    func renderINI() -> String {
+        var lines: [String] = []
+        lines.append("[output]")
+        lines.append("directory = \(outputDirectory)")
+        lines.append("filename = \(filenamePattern)")
+        lines.append("")
+        lines.append("[background]")
+        if let image = backgroundImagePath, !image.isEmpty {
+            lines.append("image = \(image)")
+        }
+        lines.append("default = \(defaultBackdropStyle.rawValue)")
+        lines.append("")
+        lines.append("[colors]")
+        lines.append("palette = \(palette.colors.joined(separator: ", "))")
+        lines.append("custom = \(palette.customColor)")
+        lines.append("")
+        lines.append("[hotkeys]")
+        lines.append("# Global shortcuts, e.g. region = cmd+shift+5. Empty = unassigned.")
+        for action in HotkeyManager.Action.allCases {
+            if let binding = hotkeys[action.rawValue] {
+                lines.append("\(action.rawValue) = \(binding.description)")
+            } else {
+                lines.append("# \(action.rawValue) = ")
+            }
+        }
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Persists the config (used by the Settings panel).
+    public func save() throws {
+        try save(to: URL(fileURLWithPath: Self.configFilePath()))
+    }
+
+    func save(to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try renderINI().write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    static func load(from url: URL) -> AppConfig {
+        var config = AppConfig()
+        if let content = try? String(contentsOf: url, encoding: .utf8) {
+            config.parseINI(content)
+        }
+        return config
     }
 
     public func resolvedOutputDirectory() -> URL {

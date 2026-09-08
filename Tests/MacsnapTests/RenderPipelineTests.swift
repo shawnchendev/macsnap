@@ -317,4 +317,75 @@ final class RenderPipelineTests: XCTestCase {
         let a4 = atan2(dy4, dx4)
         XCTAssertGreaterThan(a4, .pi / 2.0)
     }
+
+    // MARK: - Region crop orientation
+
+    /// Builds a W×H test image with top-first rows: rows above `split` are
+    /// red, rows below are blue.
+    private func splitTestImage(width: Int, height: Int, split: Int) -> CGImage {
+        var bytes = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let isTop = y < split
+            for x in 0..<width {
+                let o = (y * width + x) * 4
+                bytes[o + 0] = isTop ? 255 : 0     // R
+                bytes[o + 1] = 0                   // G
+                bytes[o + 2] = isTop ? 0 : 255     // B
+                bytes[o + 3] = 255                 // A
+            }
+        }
+        let data = CFDataCreate(nil, bytes, bytes.count)!
+        let provider = CGDataProvider(data: data)!
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        return CGImage(
+            width: width, height: height,
+            bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+            space: cs,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+        )!
+    }
+
+    private func topLeftPixel(of image: CGImage) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+        let data = image.dataProvider!.data! as Data
+        // Data row 0 is the image's top row; RGBA byte order.
+        return (data[0], data[1], data[2], data[3])
+    }
+
+    func testRegionCropSelectsBottomHalf() {
+        let source = splitTestImage(width: 200, height: 100, split: 50)
+        // View coords are top-left origin: y=50..100 is the blue bottom half.
+        let out = RenderPipeline.renderCapture(
+            source: source,
+            selection: CGRect(x: 0, y: 50, width: 200, height: 50),
+            annotations: [],
+            backdropStyle: .none,
+            imageShadow: false,
+            boundaryMode: .image,
+            scale: 1.0
+        )!
+        XCTAssertEqual(out.width, 200)
+        XCTAssertEqual(out.height, 50)
+        let px = topLeftPixel(of: out)
+        XCTAssertEqual(px.r, 0, "Bottom-half crop must be blue, got R=\(px.r)")
+        XCTAssertEqual(px.b, 255, "Bottom-half crop must be blue, got B=\(px.b)")
+    }
+
+    func testRegionCropSelectsTopHalf() {
+        let source = splitTestImage(width: 200, height: 100, split: 50)
+        let out = RenderPipeline.renderCapture(
+            source: source,
+            selection: CGRect(x: 0, y: 0, width: 200, height: 50),
+            annotations: [],
+            backdropStyle: .none,
+            imageShadow: false,
+            boundaryMode: .image,
+            scale: 1.0
+        )!
+        XCTAssertEqual(out.width, 200)
+        XCTAssertEqual(out.height, 50)
+        let px = topLeftPixel(of: out)
+        XCTAssertEqual(px.r, 255, "Top-half crop must be red, got R=\(px.r)")
+        XCTAssertEqual(px.b, 0, "Top-half crop must be red, got B=\(px.b)")
+    }
 }

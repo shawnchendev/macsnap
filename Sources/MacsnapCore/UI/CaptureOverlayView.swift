@@ -57,6 +57,12 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     // Recents Shelf
     public let recentsShelf = RecentsShelfView()
 
+    // Select-phase Discard button (top-left; Esc does the same)
+    private var isHoveringSelectDiscard: Bool = false
+    private func selectDiscardRect() -> CGRect {
+        CGRect(x: 16.0, y: captureTabsOriginY, width: 32.0, height: 32.0)
+    }
+
     // Toolbar
     public let toolbar = ToolbarView()
 
@@ -121,10 +127,27 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     private var ocrCopyButtonRect: CGRect? = nil
     private var ocrDismissButtonRect: CGRect? = nil
 
-    // Scrolling capture state
-    public var isScrollingCaptureActive: Bool = false
-    public var stitcher: Stitcher? = nil
-    private var scrollTimer: Timer? = nil
+    // Scrolling capture state (omasnap-style flow: drag region → pick
+    // Manual/Auto + direction → live capture with the overlay hidden →
+    // Done stitches). While capturing, the on-screen HUD buttons are the
+    // controls: the keyboard belongs to the page being scrolled.
+    public enum ScrollPhase {
+        case idle
+        case modeChoice
+        case capturing
+    }
+    public var scrollPhase: ScrollPhase = .idle
+    public var scrollWorker: ScrollCaptureWorker?
+    public var scrollHUD: ScrollHUDPanel?
+    private var scrollPollTimer: Timer?
+    private var scrollModeButtons: [CGRect] = []
+    private var scrollCancelButtonRect: CGRect = .zero
+    private var scrollStatusText: String = ""
+    private var scrollStatusWarning: Bool = false
+    private var scrollStalled: Bool = false
+    private var scrollKeptFrames: Int = 0
+    private var scrollTotalDelta: Int = 0
+    private var isStitchingScroll: Bool = false
 
     /// Y origin for the capture-mode tab bar, shifted above the camera notch when present.
     private var captureTabsOriginY: CGFloat {
@@ -268,7 +291,19 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         context.setFillColor(NSColor(calibratedWhite: 0.0, alpha: 0.35).cgColor)
         context.fill(bounds)
 
-        // 3. Highlight selected region or window
+        // 3. Highlight selected region or window. In window mode every
+        // known window gets a faint outline (omasnap) and the hovered one is
+        // cut out bright with a white border so the target is unmistakable.
+        if captureKind == .window {
+            for target in captureData.windows {
+                if target.rect == hoveredWindow?.rect { continue }
+                context.saveGState()
+                context.setStrokeColor(NSColor(white: 1.0, alpha: 0.28).cgColor)
+                context.setLineWidth(1.0)
+                context.stroke(target.rect)
+                context.restoreGState()
+            }
+        }
         var activeRect: CGRect? = nil
         if captureKind == .window, let win = hoveredWindow {
             // Window rect
@@ -284,14 +319,27 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             context.setBlendMode(.normal)
 
             // Draw crisp border around selection
-            context.setStrokeColor(NSColor.systemBlue.cgColor)
-            context.setLineWidth(1.5)
+            if captureKind == .window {
+                context.setStrokeColor(NSColor.white.cgColor)
+                context.setLineWidth(2.0)
+            } else {
+                context.setStrokeColor(NSColor.systemBlue.cgColor)
+                context.setLineWidth(1.5)
+            }
             context.stroke(rect)
         }
         context.restoreGState()
 
         // 4. Capture Kind Tabs at top center
         drawCaptureTabs(in: context)
+
+        // 4a. Discard button at top-left (Esc does the same)
+        drawSelectDiscardButton(in: context)
+
+        // 4b. Scrolling mode-choice panel (region drawn, pick how to capture)
+        if scrollPhase == .modeChoice {
+            drawScrollModeChoice(in: context, screenBounds: bounds)
+        }
 
         // 5. Recents shelf along right edge
         recentsShelf.draw(in: context, screenBounds: bounds)
@@ -312,6 +360,27 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             readoutText = "\(pxX), \(pxY)"
         }
         MeasurementReadout.drawReadout(in: context, at: currentMousePoint, text: readoutText, screenBounds: bounds)
+    }
+
+    private func drawSelectDiscardButton(in context: CGContext) {
+        let rect = selectDiscardRect()
+        context.saveGState()
+        let path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        context.addPath(path)
+        context.setFillColor(NSColor(calibratedWhite: 0.12, alpha: isHoveringSelectDiscard ? 0.98 : 0.92).cgColor)
+        context.fillPath()
+        context.setStrokeColor(NSColor(white: 1.0, alpha: isHoveringSelectDiscard ? 0.35 : 0.15).cgColor)
+        context.setLineWidth(1.0)
+        context.addPath(path)
+        context.strokePath()
+
+        let str = NSAttributedString(string: "✕", attributes: [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .foregroundColor: NSColor(white: isHoveringSelectDiscard ? 1.0 : 0.85, alpha: 1.0)
+        ])
+        let size = str.size()
+        str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
+        context.restoreGState()
     }
 
     private func drawCaptureTabs(in context: CGContext) {
@@ -355,6 +424,105 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         }
 
         context.restoreGState()
+    }
+
+    // MARK: - Scroll mode choice (omasnap Selected phase)
+
+    private struct ScrollModeOption {
+        let label: String
+        let automatic: Bool
+        let axis: StitchAxis
+    }
+
+    private var scrollModeOptions: [ScrollModeOption] {
+        [
+            ScrollModeOption(label: "Manual ↓", automatic: false, axis: .vertical),
+            ScrollModeOption(label: "Auto ↓", automatic: true, axis: .vertical),
+            ScrollModeOption(label: "Manual →", automatic: false, axis: .horizontal),
+            ScrollModeOption(label: "Auto →", automatic: true, axis: .horizontal),
+        ]
+    }
+
+    /// Row of mode pills just below the region (above it when there is no
+    /// room, never overlapping it — anything drawn inside the region would be
+    /// captured). Mirrors omasnap's `scrollOverlayPillRect`.
+    private func layoutScrollModeButtons(screenBounds: CGRect) {
+        let labels = scrollModeOptions.map { $0.label } + ["Cancel"]
+        let pillW: CGFloat = 104.0
+        let pillH: CGFloat = 36.0
+        let gap: CGFloat = 10.0
+        let totalW = pillW * CGFloat(labels.count) + gap * CGFloat(labels.count - 1)
+        var x = selection.midX - totalW / 2.0
+        x = min(max(x, screenBounds.minX + 12), max(screenBounds.minX + 12, screenBounds.maxX - totalW - 12))
+        var y = selection.maxY + 18
+        if y + pillH > screenBounds.maxY - 12 {
+            y = selection.minY - pillH - 18
+        }
+        if y < 12 { y = 12 }
+        scrollModeButtons = (0..<scrollModeOptions.count).map { i in
+            CGRect(x: x + CGFloat(i) * (pillW + gap), y: y, width: pillW, height: pillH)
+        }
+        scrollCancelButtonRect = CGRect(x: x + CGFloat(scrollModeOptions.count) * (pillW + gap), y: y, width: pillW, height: pillH)
+    }
+
+    private func drawScrollModeChoice(in context: CGContext, screenBounds: CGRect) {
+        layoutScrollModeButtons(screenBounds: screenBounds)
+        context.saveGState()
+        let font = NSFont.systemFont(ofSize: 13, weight: .bold)
+        for (i, opt) in scrollModeOptions.enumerated() {
+            let rect = scrollModeButtons[i]
+            let path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+            context.addPath(path)
+            context.setFillColor((opt.automatic ? NSColor.systemBlue : NSColor(calibratedWhite: 0.16, alpha: 0.94)).cgColor)
+            context.fillPath()
+            let str = NSAttributedString(string: opt.label, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.white
+            ])
+            let size = str.size()
+            str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
+        }
+        do {
+            let path = CGPath(roundedRect: scrollCancelButtonRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+            context.addPath(path)
+            context.setFillColor(NSColor(calibratedWhite: 0.16, alpha: 0.94).cgColor)
+            context.fillPath()
+            let str = NSAttributedString(string: "Cancel", attributes: [
+                .font: font,
+                .foregroundColor: NSColor.white
+            ])
+            let size = str.size()
+            str.draw(at: CGPoint(x: scrollCancelButtonRect.midX - size.width / 2.0, y: scrollCancelButtonRect.midY - size.height / 2.0))
+        }
+        // Status line under the buttons (omasnap status pill).
+        if !scrollStatusText.isEmpty {
+            let sfont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            let attr = NSAttributedString(string: scrollStatusText, attributes: [
+                .font: sfont,
+                .foregroundColor: scrollStatusWarning ? NSColor.systemOrange : NSColor.white
+            ])
+            let size = attr.size()
+            let pillW = size.width + 28.0
+            let pillH: CGFloat = 30.0
+            let pillX = screenBounds.midX - pillW / 2.0
+            let pillY = min(scrollModeButtons.first?.minY ?? 60, scrollCancelButtonRect.minY) - pillH - 10
+            if pillY > 8 {
+                let pillRect = CGRect(x: pillX, y: pillY, width: pillW, height: pillH)
+                let path = CGPath(roundedRect: pillRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+                context.addPath(path)
+                context.setFillColor(NSColor(calibratedWhite: 0.1, alpha: 0.94).cgColor)
+                context.fillPath()
+                attr.draw(at: CGPoint(x: pillRect.minX + 14, y: pillRect.midY - size.height / 2.0))
+            }
+        }
+        context.restoreGState()
+    }
+
+    private func scrollModeIndex(at point: CGPoint) -> Int? {
+        for (i, rect) in scrollModeButtons.enumerated() {
+            if rect.contains(point) { return i }
+        }
+        return nil
     }
 
     private func drawEditPhase(in context: CGContext) {
@@ -996,6 +1164,19 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         currentMousePoint = self.convert(event.locationInWindow, from: nil)
 
         if phase == .select {
+            // Discard button hover (top-left).
+            let hoveringDiscard = selectDiscardRect().contains(currentMousePoint)
+            if hoveringDiscard != isHoveringSelectDiscard {
+                isHoveringSelectDiscard = hoveringDiscard
+            }
+            if hoveringDiscard {
+                NSCursor.pointingHand.set()
+                self.toolTip = "Discard (Esc)"
+            } else {
+                self.toolTip = nil
+                NSCursor.arrow.set()
+            }
+
             // Check recents hover
             if recentsShelf.hotZoneRect(screenBounds: self.bounds).contains(currentMousePoint) {
                 recentsShelf.fanProgress = min(1.0, recentsShelf.fanProgress + 0.25)
@@ -1056,6 +1237,33 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         currentMousePoint = dragStart
 
         if phase == .select {
+            // Discard button (top-left) dismisses the overlay, same as Esc.
+            if selectDiscardRect().contains(dragStart) {
+                dismissCapture()
+                return
+            }
+
+            // Scroll mode choice: buttons act, Cancel aborts, a drag anywhere
+            // else starts a fresh region (omasnap: chrome clicks never restart).
+            if scrollPhase == .modeChoice {
+                if scrollCancelButtonRect.contains(dragStart) {
+                    cancelScrollCapture()
+                    return
+                }
+                if let idx = scrollModeIndex(at: dragStart) {
+                    let opt = scrollModeOptions[idx]
+                    beginScrollCapture(automatic: opt.automatic, axis: opt.axis)
+                    return
+                }
+                if selection.insetBy(dx: -6, dy: -6).contains(dragStart) {
+                    // Press inside the region belongs to the page underneath;
+                    // it must not restart selection (omasnap Selected phase).
+                    return
+                }
+                scrollPhase = .idle
+                // Fall through to start a fresh drag below.
+            }
+
             // Check recents shelf click
             if let recentIdx = recentsShelf.itemIndex(at: dragStart, screenBounds: self.bounds) {
                 let item = recentsShelf.items[recentIdx]
@@ -1069,9 +1277,14 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 return
             }
 
-            if captureKind == .window, let win = hoveredWindow {
-                self.selection = win.rect
-                commitSelection()
+            if captureKind == .window {
+                // Auto-capture the window under the press (omasnap chooseWindow
+                // at press time, not hover time).
+                if let win = WindowDiscovery.windowAt(point: dragStart, in: captureData.windows) {
+                    hoveredWindow = win
+                    chooseWindow(win)
+                    return
+                }
                 return
             }
 
@@ -1191,6 +1404,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         currentMousePoint = self.convert(event.locationInWindow, from: nil)
 
         if phase == .select {
+            // Region is fixed while picking a scroll mode.
+            if scrollPhase == .modeChoice {
+                needsDisplay = true
+                return
+            }
             let minX = min(dragStart.x, currentMousePoint.x)
             let minY = min(dragStart.y, currentMousePoint.y)
             let maxX = max(dragStart.x, currentMousePoint.x)
@@ -1244,9 +1462,20 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         currentMousePoint = self.convert(event.locationInWindow, from: nil)
 
         if phase == .select {
+            // A release arriving while still picking a scroll mode means no
+            // fresh drag is in flight (a press outside the region resets to
+            // idle at press time) — absorb it.
+            if scrollPhase == .modeChoice {
+                needsDisplay = true
+                return
+            }
             if selection.width > 4 && selection.height > 4 {
                 lastDrawnRegion = selection
-                commitSelection()
+                if captureKind == .scroll {
+                    enterScrollModeChoice(region: selection)
+                } else {
+                    commitSelection()
+                }
             }
         } else {
             // Edit phase commit drag
@@ -1404,28 +1633,17 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         let isCmd = event.modifierFlags.contains(.command)
         let isShift = event.modifierFlags.contains(.shift)
 
-        // Esc key
+        // Esc key (also reachable via cancelOperation: below)
         if event.keyCode == 53 {
-            if activeInlineTextField != nil {
-                cancelActiveTextEditing()
-                return
-            }
-            if ocrTextResult != nil {
-                ocrTextResult = nil
-                ocrCardRect = nil
-                needsDisplay = true
-                return
-            }
-            dismissCapture()
+            handleEscape()
             return
         }
 
         // Enter key
         if event.keyCode == 36 {
             if phase == .select {
-                if let win = hoveredWindow {
-                    self.selection = win.rect
-                    commitSelection()
+                if captureKind == .window, let win = hoveredWindow {
+                    chooseWindow(win)
                 } else if !selection.isEmpty {
                     commitSelection()
                 }
@@ -1436,8 +1654,18 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             return
         }
 
-        // Space key: cycle tabs in select phase
+        // Arrow keys in window mode: Cmd+Arrows (omasnap Super+Arrows) move
+        // among windows; plain arrows work too since they do nothing else here.
+        if phase == .select && captureKind == .window && event.keyCode >= 123 && event.keyCode <= 126 {
+            selectWindowInDirection(keyCode: event.keyCode)
+            return
+        }
+
+        // Space key: cycle tabs in select phase (absorbed while picking scroll mode)
         if event.keyCode == 49 && phase == .select {
+            if scrollPhase == .modeChoice {
+                return
+            }
             cycleTabs()
             return
         }
@@ -1456,7 +1684,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             case "a":
                 if phase == .select {
                     selection = self.bounds
-                    commitSelection()
+                    if captureKind == .scroll {
+                        enterScrollModeChoice(region: selection)
+                    } else {
+                        commitSelection()
+                    }
                 }
             default:
                 super.keyDown(with: event)
@@ -1478,8 +1710,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             }
         case "s":
             if phase == .select {
-                captureKind = .scroll
-                needsDisplay = true
+                activateCaptureKind(.scroll)
             } else {
                 if tool == .spotlight {
                     cycleSpotlightShape()
@@ -1491,7 +1722,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         case "r":
             if phase == .select && !lastDrawnRegion.isEmpty {
                 selection = lastDrawnRegion
-                commitSelection()
+                if captureKind == .scroll {
+                    enterScrollModeChoice(region: selection)
+                } else {
+                    commitSelection()
+                }
             } else {
                 setTool(.rectangle)
             }
@@ -1542,17 +1777,340 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         }
     }
 
+    // MARK: - Escape / Discard
+
+    /// Shared Esc handling for both the keyDown path and the cancelOperation:
+    /// key-binding path (used by CaptureOverlayWindow as a safety net).
+    public func handleEscape() {
+        if activeInlineTextField != nil {
+            cancelActiveTextEditing()
+            return
+        }
+        if scrollPhase == .modeChoice {
+            cancelScrollCapture()
+            return
+        }
+        if ocrTextResult != nil {
+            ocrTextResult = nil
+            ocrCardRect = nil
+            needsDisplay = true
+            return
+        }
+        dismissCapture()
+    }
+
+    public override func cancelOperation(_ sender: Any?) {
+        handleEscape()
+    }
+
     // MARK: - Phase Transitions & Actions
 
-    private func commitSelection() {
+    /// Screen-space rect that was committed (region/window drag, fullscreen,
+    /// or scroll region). Kept for app-slug naming, which needs coordinates in
+    /// the original screen space even after the source is rebased below.
+    public var committedScreenSelection: CGRect = .zero
+
+    func commitSelection(cropSourceToSelection: Bool = true) {
+        if cropSourceToSelection {
+            committedScreenSelection = selection.standardized
+        }
         if quickOutputMode != .none {
             finish(outputMode: quickOutputMode)
             return
+        }
+        if cropSourceToSelection {
+            rebaseSourceToSelection()
         }
         phase = .edit
         initialCaptureSelection = selection
         opLog.previewWidth = Int(selection.width)
         opLog.previewHeight = Int(selection.height)
+        needsDisplay = true
+    }
+
+    /// Physically crops `pristineSource` to the committed selection and
+    /// rebases `selection` to the cropped image's full frame. After this the
+    /// editor's universe is exactly what was dragged: crop handles can shrink
+    /// the frame but never reveal pixels outside the original drag.
+    /// `lastDrawnRegion` intentionally stays in screen coords (R restores it).
+    func rebaseSourceToSelection() {
+        let sel = selection.standardized
+        let srcW = CGFloat(pristineSource.width)
+        let srcH = CGFloat(pristineSource.height)
+        let s = effectiveScale
+        guard s > 0, sel.width > 4, sel.height > 4 else { return }
+        let full = CGRect(x: 0, y: 0, width: srcW / s, height: srcH / s)
+        // Already the full frame (e.g. fullscreen): nothing to do.
+        if abs(sel.minX - full.minX) < 0.5 && abs(sel.minY - full.minY) < 0.5
+            && abs(sel.width - full.width) < 0.5 && abs(sel.height - full.height) < 0.5 {
+            selection = full
+            activeCrop = full
+            return
+        }
+        // Same clamp convention as RenderPipeline (top-left origin).
+        let x = max(0, min(srcW - 1, sel.minX * s))
+        let y = max(0, min(srcH - 1, sel.minY * s))
+        let w = max(1, min(srcW - x, sel.width * s))
+        let h = max(1, min(srcH - y, sel.height * s))
+        guard let cropped = pristineSource.cropping(to: CGRect(x: x, y: y, width: w, height: h)) else { return }
+        pristineSource = cropped
+        selection = CGRect(x: 0, y: 0, width: w / s, height: h / s)
+        activeCrop = selection
+    }
+
+    // MARK: - Window capture (omasnap chooseWindow)
+
+    /// Captures the given window: selection becomes its rect and the editor
+    /// opens (or quick output fires), exactly like omasnap's `chooseWindow`.
+    private func chooseWindow(_ win: WindowTarget) {
+        selection = win.rect
+        lastDrawnRegion = win.rect
+        hoveredWindow = nil
+        isMouseDown = false
+        commitSelection()
+    }
+
+    private func selectWindowInDirection(keyCode: UInt16) {
+        let current: Int?
+        if let hovered = hoveredWindow,
+           let idx = captureData.windows.firstIndex(where: { $0.windowId == hovered.windowId }) {
+            current = idx
+        } else if !currentMousePoint.equalTo(.zero) {
+            current = WindowDiscovery.windowIndexAt(point: currentMousePoint, in: captureData.windows)
+        } else {
+            current = nil
+        }
+        guard let next = WindowDiscovery.windowInDirection(from: current, keyCode: keyCode, in: captureData.windows) else { return }
+        hoveredWindow = captureData.windows[next]
+        needsDisplay = true
+    }
+
+    // MARK: - Scrolling Region Capture (omasnap flow, adapted to macOS)
+
+    /// Quartz (top-left origin) global rect for the current selection.
+    /// `CGWindowListCreateImage` expects Quartz coords, while `selection`
+    /// is view-local flipped coords (top-left of this screen).
+    private func scrollCaptureQuartzRect(for rect: CGRect) -> CGRect {
+        let cocoa = captureData.screenBounds
+        let primaryH: CGFloat
+        if let first = NSScreen.screens.first {
+            primaryH = first.frame.height
+        } else {
+            primaryH = cocoa.maxY > 0 ? cocoa.maxY : cocoa.height
+        }
+        let qScreenOrigin = CGPoint(x: cocoa.minX, y: primaryH - cocoa.maxY)
+        return CGRect(
+            x: qScreenOrigin.x + rect.minX,
+            y: qScreenOrigin.y + rect.minY,
+            width: rect.width,
+            height: rect.height
+        ).standardized
+    }
+
+    /// Region drawn in scroll mode: stay on the overlay and offer Manual/Auto
+    /// × vertical/horizontal (omasnap Selected phase). The region is shared
+    /// with plain region capture, so it survives tab switches.
+    public func enterScrollModeChoice(region: CGRect) {
+        let clean = region.standardized
+        // omasnap kMinRegion: captures smaller than this are not offered.
+        guard clean.width >= 32 && clean.height >= 32 else { return }
+        selection = clean
+        lastDrawnRegion = clean
+        committedScreenSelection = clean
+        scrollPhase = .modeChoice
+        scrollStatusText = "Choose how to capture · Manual: you scroll · Auto: macsnap scrolls"
+        scrollStatusWarning = false
+        needsDisplay = true
+    }
+
+    /// Starts the live capture: hides the overlay (the page underneath must
+    /// stay scrollable and the overlay must not photograph itself — omasnap's
+    /// input hole serves the same purpose) and shows the floating HUD panel
+    /// outside the region with Done/Back/Cancel.
+    public func beginScrollCapture(automatic: Bool, axis: StitchAxis) {
+        let clean = selection.standardized
+        guard scrollPhase == .modeChoice else { return }
+        guard clean.width >= 32 && clean.height >= 32 else {
+            scrollPhase = .idle
+            scrollModeButtons = []
+            scrollCancelButtonRect = .zero
+            scrollStatusText = ""
+            selection = .zero
+            needsDisplay = true
+            return
+        }
+        isMouseDown = false
+        scrollPhase = .capturing
+        scrollStalled = false
+        scrollKeptFrames = 0
+        scrollTotalDelta = 0
+        isStitchingScroll = false
+
+        let qRect = scrollCaptureQuartzRect(for: clean)
+        let worker = ScrollCaptureWorker(
+            regionQuartz: qRect,
+            axis: axis,
+            mode: automatic ? .auto : .manual
+        )
+        scrollWorker = worker
+
+        // HUD goes below the region, above it when there is no room, never
+        // overlapping (anything over the region would be stitched in).
+        let panel = ScrollHUDPanel()
+        let panelSize = CGSize(width: 430, height: 118)
+        let regionCocoa = CGRect(
+            x: captureData.screenBounds.minX + clean.minX,
+            y: captureData.screenBounds.maxY - clean.maxY,
+            width: clean.width,
+            height: clean.height
+        )
+        panel.setFrame(ScrollHUDPanel.frameOutside(regionCocoa: regionCocoa, screenCocoa: captureData.screenBounds, panelSize: panelSize), display: false)
+        panel.onDone = { [weak self] in self?.finishScrollCapture() }
+        panel.onBack = { [weak self] in self?.backToScrollModeChoice() }
+        panel.onCancel = { [weak self] in self?.cancelScrollCapture() }
+        panel.onContinue = { [weak self] in self?.continueScrollCapture() }
+        panel.setStatus(
+            automatic ? "Auto-scrolling… · keep the pointer still" : "Scroll the page · Done stitches it",
+            detail: "Capturing \(Int(clean.width)) × \(Int(clean.height)) pt region"
+        )
+        panel.setStalled(false)
+        scrollHUD = panel
+
+        self.window?.orderOut(nil)
+        panel.makeKeyAndOrderFront(nil)
+
+        worker.start()
+        scrollPollTimer?.invalidate()
+        scrollPollTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollScrollWorker()
+            }
+        }
+        if let t = scrollPollTimer {
+            RunLoop.main.add(t, forMode: .common)
+        }
+    }
+
+    private func pollScrollWorker() {
+        guard scrollPhase == .capturing, !isStitchingScroll else { return }
+        guard let worker = scrollWorker, let hud = scrollHUD else { return }
+        let snap = worker.snapshot()
+        scrollKeptFrames = snap.keptFrames
+        scrollTotalDelta = snap.totalDelta
+        scrollStalled = snap.stalled
+        hud.setStalled(snap.stalled)
+        let detail = "\(snap.keptFrames) frame\(snap.keptFrames == 1 ? "" : "s") · +\(snap.totalDelta)px"
+        if snap.failed {
+            hud.setStatus(snap.statusText, detail: detail, warning: true)
+        } else if !snap.statusText.isEmpty {
+            hud.setStatus(snap.statusText, detail: detail, warning: snap.statusWarning)
+        } else {
+            hud.setStatus("Capturing…", detail: detail)
+        }
+    }
+
+    public func continueScrollCapture() {
+        guard scrollPhase == .capturing, let worker = scrollWorker else { return }
+        scrollHUD?.setStalled(false)
+        scrollHUD?.setStatus("Auto-scrolling… · keep the pointer still")
+        worker.resume()
+    }
+
+    /// Back to the mode row with the region intact (omasnap returnToModeChoice).
+    public func backToScrollModeChoice() {
+        guard scrollPhase == .capturing else { return }
+        tearDownScrollCaptureUI()
+        scrollPhase = .modeChoice
+        scrollStatusText = "The page inside is live · scroll it into position, then choose a mode"
+        if let win = self.window as? CaptureOverlayWindow {
+            win.showOverlay()
+        }
+        needsDisplay = true
+    }
+
+    private func tearDownScrollCaptureUI() {
+        scrollPollTimer?.invalidate()
+        scrollPollTimer = nil
+        scrollWorker?.requestStop()
+        scrollWorker?.waitForExit()
+        scrollWorker = nil
+        if let hud = scrollHUD {
+            hud.orderOut(nil)
+            scrollHUD = nil
+        }
+    }
+
+    public func finishScrollCapture() {
+        guard scrollPhase == .capturing else { return }
+        guard !isStitchingScroll else { return }
+        isStitchingScroll = true
+        scrollHUD?.setBusy(true)
+        scrollHUD?.setStatus("Stitching…")
+        // Stop the loop first so the stitch sees a stable session.
+        scrollWorker?.requestStop()
+        scrollWorker?.waitForExit()
+        scrollPollTimer?.invalidate()
+        scrollPollTimer = nil
+        let worker = scrollWorker
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let stitched = worker?.finishImage()
+            Task { @MainActor in
+                self?.applyStitchedScrollImage(stitched)
+            }
+        }
+    }
+
+    private func applyStitchedScrollImage(_ stitched: CGImage?) {
+        isStitchingScroll = false
+        guard scrollPhase == .capturing else { return }
+        if let hud = scrollHUD {
+            hud.orderOut(nil)
+            scrollHUD = nil
+        }
+        scrollWorker = nil
+        if let stitched = stitched {
+            pristineSource = stitched
+            let w = CGFloat(stitched.width) / effectiveScale
+            let h = CGFloat(stitched.height) / effectiveScale
+            if w > 4 && h > 4 {
+                selection = CGRect(x: 0, y: 0, width: w, height: h)
+                lastDrawnRegion = selection
+                activeCrop = selection
+            }
+        }
+        scrollPhase = .idle
+        scrollModeButtons = []
+        scrollCancelButtonRect = .zero
+        if let win = self.window as? CaptureOverlayWindow {
+            win.showOverlay()
+        }
+        if stitched == nil {
+            // Nothing to edit: back to selecting with an explanation.
+            scrollStatusText = "Stitch failed · try a smaller region or slower scroll"
+            scrollStatusWarning = true
+            needsDisplay = true
+            return
+        }
+        // Already rebased to the stitched image in applyStitchedScrollImage.
+        commitSelection(cropSourceToSelection: false)
+    }
+
+    public func cancelScrollCapture() {
+        if scrollPhase == .capturing {
+            tearDownScrollCaptureUI()
+            scrollPhase = .idle
+            scrollModeButtons = []
+            scrollCancelButtonRect = .zero
+            if let win = self.window as? CaptureOverlayWindow {
+                win.showOverlay()
+            }
+            needsDisplay = true
+            return
+        }
+        // Mode choice → back to plain selecting (region kept, like omasnap).
+        scrollPhase = .idle
+        scrollModeButtons = []
+        scrollCancelButtonRect = .zero
         needsDisplay = true
     }
 
@@ -1573,12 +2131,25 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     }
 
     private func activateCaptureKind(_ kind: CaptureKind) {
+        if scrollPhase != .idle {
+            cancelScrollCapture()
+        }
+        // Region and Scrolling Region frame the same rectangle, so switching
+        // between the two keeps it (omasnap). Window and Fullscreen pick an
+        // area of their own, so switching to either starts over.
+        let keepsRegion = (captureKind == .region || captureKind == .scroll)
+            && (kind == .region || kind == .scroll)
+        if !keepsRegion {
+            selection = .zero
+        }
         self.captureKind = kind
         if kind == .fullscreen {
             self.selection = self.bounds
             commitSelection()
         } else if kind == .window {
             hoveredWindow = WindowDiscovery.windowAt(point: currentMousePoint, in: captureData.windows)
+        } else {
+            hoveredWindow = nil
         }
         needsDisplay = true
     }
@@ -1961,9 +2532,12 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
-    private func sampleEyedropperColor(at point: CGPoint) {
-        let pxX = min(max(0, Int(point.x * effectiveScale)), pristineSource.width - 1)
-        let pxY = min(max(0, Int(point.y * effectiveScale)), pristineSource.height - 1)
+    /// Samples the source pixel at top-left-based image coords. Draws into a
+    /// 1×1 sRGB context (normalizing any source pixel format) offset so the
+    /// wanted pixel lands at the origin.
+    func eyedropperHex(image: CGImage, x: Int, y: Int) -> String? {
+        let pxX = min(max(0, x), image.width - 1)
+        let pxY = min(max(0, y), image.height - 1)
 
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -1974,18 +2548,33 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 bytesPerRow: 4,
                 space: colorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-              ) else { return }
+              ) else { return nil }
 
-        context.draw(pristineSource, in: CGRect(x: -pxX, y: -(pristineSource.height - 1 - pxY), width: pristineSource.width, height: pristineSource.height))
-        if let data = context.data {
-            let ptr = data.bindMemory(to: UInt8.self, capacity: 4)
-            let r = ptr[0]
-            let g = ptr[1]
-            let b = ptr[2]
-            let hex = String(format: "#%02x%02x%02x", r, g, b)
+        context.draw(image, in: CGRect(x: -pxX, y: -(image.height - 1 - pxY), width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        let ptr = data.bindMemory(to: UInt8.self, capacity: 4)
+        return String(format: "#%02x%02x%02x", ptr[0], ptr[1], ptr[2])
+    }
+
+    private func sampleEyedropperColor(at point: CGPoint) {
+        let pxX = Int(point.x * effectiveScale)
+        let pxY = Int(point.y * effectiveScale)
+
+        if let hex = eyedropperHex(image: pristineSource, x: pxX, y: pxY) {
             self.activeColorHex = hex
             self.toolbar.activeColorHex = hex
             setTool(.select)
+            // Visible confirmation: a sampled custom color matches no palette
+            // swatch, so without this the click appears to do nothing.
+            ocrStatusMessage = "Eyedropper: \(hex) · next shape uses it"
+            needsDisplay = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                // Don't clobber a newer toast (e.g. OCR feedback).
+                if self?.ocrStatusMessage?.hasPrefix("Eyedropper:") == true {
+                    self?.ocrStatusMessage = nil
+                    self?.needsDisplay = true
+                }
+            }
         }
     }
 
@@ -2051,6 +2640,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     // MARK: - Finish & Outputs
 
     public func finish(outputMode: QuickOutputMode) {
+        if scrollPhase == .capturing {
+            tearDownScrollCaptureUI()
+        }
+        scrollPhase = .idle
         guard let rendered = RenderPipeline.renderCapture(
             source: pristineSource,
             selection: selection.isEmpty ? CGRect(origin: .zero, size: pristineSourceSize()) : selection,
@@ -2065,8 +2658,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             return
         }
 
-        // Dominant app slug for naming
-        let appSlug = WindowDiscovery.dominantAppClass(in: captureData.windows, selection: selection)
+        // Dominant app slug for naming. Window rects live in the original
+        // screen space, so use the committed screen-space selection (the
+        // working `selection` was rebased to the cropped source at commit).
+        let slugSelection = committedScreenSelection.isEmpty ? selection : committedScreenSelection
+        let appSlug = WindowDiscovery.dominantAppClass(in: captureData.windows, selection: slugSelection)
 
         if outputMode == .copy || outputMode == .both {
             _ = ScreenCaptureEngine.copyImageToClipboard(rendered)
@@ -2090,6 +2686,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     }
 
     public func dismissCapture() {
+        if scrollPhase == .capturing {
+            tearDownScrollCaptureUI()
+        }
+        scrollPhase = .idle
         self.window?.close()
         NSApplication.shared.terminate(nil)
     }

@@ -71,7 +71,7 @@ public enum ScreenCaptureEngine {
 
         var windows: [WindowTarget] = []
         if includeWindows {
-            windows = WindowDiscovery.enumerateWindows(screenBounds: cgScreenRect)
+            windows = WindowDiscovery.enumerateWindows(screenBounds: cgScreenRect, primaryScreenHeight: primaryHeight)
         }
 
         return ScreenCaptureData(

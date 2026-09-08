@@ -20,7 +20,15 @@ public struct WindowTarget: Equatable, Sendable {
 
 public enum WindowDiscovery {
     /// Discovers visible standard application windows on screen.
-    public static func enumerateWindows(screenBounds: CGRect) -> [WindowTarget] {
+    /// - Parameters:
+    ///   - screenBounds: The screen's rect in Quartz global coordinates
+    ///     (origin = top-left of primary display, y increases downward),
+    ///     as computed by `ScreenCaptureEngine.captureCurrentScreen`.
+    ///   - primaryScreenHeight: Height of the primary screen in points.
+    ///     Kept for API compatibility; not needed for the conversion because both
+    ///     `CGWindowListCopyWindowInfo` bounds and the flipped overlay view use a
+    ///     top-left origin (verified: menu bar windows report Y=0).
+    public static func enumerateWindows(screenBounds: CGRect, primaryScreenHeight: CGFloat) -> [WindowTarget] {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
@@ -34,15 +42,15 @@ public enum WindowDiscovery {
                 continue
             }
             guard let boundsDict = dict[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else {
+                  let cgRect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else {
                 continue
             }
             // Filter out tiny or invisible windows
-            if rect.width < 60 || rect.height < 60 {
+            if cgRect.width < 60 || cgRect.height < 60 {
                 continue
             }
-            // Check intersection with active screen
-            if !rect.intersects(screenBounds) {
+            // Check intersection with active screen (cgRect is in CG screen space)
+            if !cgRect.intersects(screenBounds) {
                 continue
             }
 
@@ -55,7 +63,18 @@ public enum WindowDiscovery {
                 continue
             }
 
-            targets.append(WindowTarget(windowId: id, rect: rect, title: title, appName: ownerName))
+            // Convert Quartz global rect (origin = top-left of primary screen) →
+            // flipped view rect (origin = top-left of this screen).
+            // screenBounds.origin is the Quartz origin of this screen (may be non-zero on multi-monitor).
+            _ = primaryScreenHeight
+            let viewRect = CGRect(
+                x: cgRect.minX - screenBounds.origin.x,
+                y: cgRect.minY - screenBounds.origin.y,
+                width: cgRect.width,
+                height: cgRect.height
+            )
+
+            targets.append(WindowTarget(windowId: id, rect: viewRect, title: title, appName: ownerName))
         }
 
         return targets
@@ -69,6 +88,54 @@ public enum WindowDiscovery {
             }
         }
         return nil
+    }
+
+    /// Index of the foremost window containing the point, or nil.
+    public static func windowIndexAt(point: CGPoint, in windows: [WindowTarget]) -> Int? {
+        for (i, target) in windows.enumerated() {
+            if target.rect.contains(point) {
+                return i
+            }
+        }
+        return nil
+    }
+
+    /// Nearest window in an arrow-key direction from the current one,
+    /// mirroring omasnap's `windowInDirection` (Super+Arrows there,
+    /// Cmd+Arrows here). `keyCode` is a macOS arrow keyCode
+    /// (123 left, 124 right, 125 down, 126 up); view coords are y-down,
+    /// so down means +y. Returns the current index when nothing qualifies.
+    public static func windowInDirection(from current: Int?, keyCode: UInt16, in windows: [WindowTarget]) -> Int? {
+        guard !windows.isEmpty else { return nil }
+        let origin: CGPoint
+        if let c = current, c >= 0, c < windows.count {
+            let r = windows[c].rect
+            origin = CGPoint(x: r.midX, y: r.midY)
+        } else {
+            return nil
+        }
+        var best: Int? = nil
+        var bestScore = CGFloat.greatestFiniteMagnitude
+        for (i, target) in windows.enumerated() {
+            if i == current { continue }
+            let dx = target.rect.midX - origin.x
+            let dy = target.rect.midY - origin.y
+            var along: CGFloat = 0
+            var across: CGFloat = 0
+            switch keyCode {
+            case 123 where dx < 0: along = -dx; across = abs(dy) // Left
+            case 124 where dx > 0: along = dx; across = abs(dy)  // Right
+            case 126 where dy < 0: along = -dy; across = abs(dx) // Up
+            case 125 where dy > 0: along = dy; across = abs(dx)  // Down
+            default: continue
+            }
+            let score = along + across * 2.0
+            if score < bestScore {
+                bestScore = score
+                best = i
+            }
+        }
+        return best ?? current
     }
 
     /// Finds the dominant app slug for a given selection rectangle.

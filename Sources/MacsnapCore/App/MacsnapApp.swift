@@ -136,38 +136,33 @@ public final class MacsnapApp: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Check Screen Recording permissions
+        // Check Screen Recording permissions. The system prompt (triggered by
+        // the request call below) is the only dialog — no custom alert.
         if !ScreenCaptureEngine.hasScreenRecordingPermission() {
             fputs("[macsnap] Screen Recording permission is required.\n", stderr)
             fputs("[macsnap] Please grant Screen Recording permission in System Settings > Privacy & Security > Screen & System Audio Recording.\n", stderr)
 
             _ = ScreenCaptureEngine.requestScreenRecordingPermission()
-
-            let alert = NSAlert()
-            alert.messageText = "Screen Recording Permission Required"
-            alert.informativeText = "macsnap requires Screen Recording permission to capture screens and windows.\n\nPlease enable it in System Settings > Privacy & Security > Screen & System Audio Recording."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Cancel")
-
-            NSApp.activate(ignoringOtherApps: true)
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
             exit(1)
         }
 
-        // Capture screen
-        guard let capture = await ScreenCaptureEngine.captureCurrentScreen(includeWindows: mode == .window) else {
-            fputs("Failed to capture screen (check Screen Recording permissions)\n", stderr)
+        // Capture screen. Windows are always discovered (except instant
+        // fullscreen quick output) so switching to the Window tab later works.
+        // Mirrors omasnap, which skips window discovery only for instant output.
+        let instantFullscreenOutput = isFullscreenImmediate && quickOutput != .none
+        guard let capture = await ScreenCaptureEngine.captureCurrentScreen(includeWindows: !instantFullscreenOutput) else {
+            // NB: preflight can pass while capture still fails when the TCC
+            // entry pins an older build's code signature (see README
+            // "Permissions & rebuilding"): the toggle looks ON but the current
+            // binary no longer matches it.
+            fputs("Failed to capture screen.\n", stderr)
+            fputs("If Screen Recording already looks enabled for macsnap, remove it with minus and re-add it (each rebuild changes an ad-hoc signature).\n", stderr)
+            fputs("Durable fix: sign with an Apple Development certificate — see README.\n", stderr)
             exit(1)
         }
 
         // Immediate fullscreen quick output
-        if isFullscreenImmediate && quickOutput != .none {
+        if instantFullscreenOutput {
             if quickOutput == .copy || quickOutput == .both {
                 _ = ScreenCaptureEngine.copyImageToClipboard(capture.image)
             }
@@ -191,8 +186,7 @@ public final class MacsnapApp: NSObject, NSApplicationDelegate {
         }
 
         self.overlayWindow = overlay
-        overlay.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        overlay.showOverlay()
     }
 
     private func openEditorWithImage(_ image: CGImage, sourceURL: URL?) {
@@ -218,8 +212,7 @@ public final class MacsnapApp: NSObject, NSApplicationDelegate {
         }
 
         self.overlayWindow = overlay
-        overlay.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        overlay.showOverlay()
     }
 
     private func printHelp() {

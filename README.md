@@ -100,6 +100,51 @@ sudo make install PREFIX=/usr/local
 
 ---
 
+## Menu Bar App
+
+For point-and-click triggering instead of the terminal, run the resident menu-bar app (also installed by `make install`):
+
+```bash
+macsnap-menubar
+```
+
+A viewfinder icon appears in the menu bar with Capture Region / Window / Scrolling Region / Fullscreen actions, an Open Screenshots Folder shortcut, an Open at Login toggle (LaunchAgent, takes effect next login), and Quit. Each action launches the installed `macsnap` binary, so the capture flow — and its Screen Recording permission — is unchanged. Only one menu-bar instance runs at a time.
+
+## Settings (Menu Bar)
+
+**Settings…** (in the menu, `⌘,`) opens a settings panel with two tabs:
+
+- **General** — screenshots folder (with folder picker), filename pattern (`{date}` `{time}` `{app}` tokens), and Open at Login. When bundled as `Macsnap.app` in `/Applications`, login uses the system service; the bare-binary install writes a LaunchAgent file instead.
+- **Hotkeys** — system-wide shortcuts for all four capture modes, no Accessibility permission needed (Carbon hotkeys). Click *Record shortcut*, press a combo with at least one of ⌘/⌃/⌥/⇧, Delete clears, Esc cancels. Combos the system rejects (already taken) are reported on Save. Bindings persist in `~/.config/macsnap/macsnap.conf` under `[hotkeys]`, e.g. `region = cmd+shift+5`, and take effect immediately — no restart. They fire even when another app is focused; while an overlay is already open they toggle it closed, same as the CLI. Assigned shortcuts also appear next to their menu items.
+
+## Mac App Bundle
+
+For a double-clickable app (no terminal, no Dock icon), build the bundle and copy it to Applications:
+
+```bash
+make app              # assembles dist/Macsnap.app (ad-hoc signed)
+make install-app      # copies it to /Applications (may prompt for a password)
+```
+
+Double-clicking `Macsnap.app` launches the same resident menu bar. Inside the bundle, `Contents/MacOS` holds both executables, so capture launching keeps working with no PATH setup. Open at Login uses the system login-items service when bundled (requires the app to live in `/Applications`).
+
+> **One-time re-permission:** macOS grants Screen Recording per app identity, so the first capture from the bundle asks for permission again under the name “macsnap” — approve it once in System Settings and it sticks.
+
+### Permissions & rebuilding (important)
+
+macOS pins a Screen Recording grant to the exact binary signature. The default build is **ad-hoc signed**, so **every rebuild invalidates the grant**: System Settings still shows the toggle ON, but captures fail (`Failed to match existing code requirement` in the log) until you remove macsnap with minus and re-add/re-approve it. If captures suddenly fail right after an update, that dance is the fix — not a bug in the capture code.
+
+Durable options:
+1. **Sign with a free Apple Development certificate** (stable across rebuilds): in Xcode go to Settings → Accounts, add your Apple ID, then
+   ```bash
+   make app CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)"
+   make install-app
+   ```
+   Find the exact identity string via `security find-identity -v -p codesigning`.
+2. Or stop rebuilding once a build works — the grant stays valid as long as the binary is untouched.
+
+---
+
 ## Setting up macOS Shortcuts
 
 You can trigger `macsnap` with a global hotkey such as `Cmd+Shift+4` or `F12`:
@@ -165,6 +210,7 @@ macsnap --pin /path/to/screenshot.png
 | Arrow keys | Move between windows in window mode |
 | `Enter` | Capture highlighted window |
 | `Cmd+A` | Select fullscreen |
+| Scrolling capture | Drag a region, pick Manual ↓/→ (you scroll) or Auto ↓/→ (macsnap scrolls), then Done stitches |
 | Hover right edge | Fan out 5 most recent captures; click one to reopen |
 | `Esc` | Dismiss overlay |
 
@@ -227,6 +273,12 @@ Environment variable overrides:
 - `MACSNAP_SCREENSHOT_DIR` / `OMASNAP_SCREENSHOT_DIR`
 - `MACSNAP_RECENT_DIR` / `OMASNAP_RECENT_DIR`
 - `MACSNAP_OCR_LANGS` / `OMASNAP_OCR_LANGS`
+
+---
+
+## Acknowledgements
+
+macsnap's capture and annotation workflow is heavily inspired by [omasnap](https://github.com/tobi/omasnap) by Tobi Lütke — region/window/scrolling capture modes, the scrolling stitcher approach, the recents shelf, OCR, and many interaction patterns were adapted from it to native macOS. Thank you to Tobi and the omasnap contributors.
 
 ---
 

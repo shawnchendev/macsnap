@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "macsnap", targets: ["Macsnap"]),
+        .executable(name: "macsnap-menubar", targets: ["MacsnapMenuBar"]),
         .library(name: "MacsnapCore", targets: ["MacsnapCore"])
     ],
     targets: [
@@ -19,6 +20,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "Macsnap",
+            dependencies: ["MacsnapCore"]
+        ),
+        .executableTarget(
+            name: "MacsnapMenuBar",
             dependencies: ["MacsnapCore"]
         ),
         .testTarget(
