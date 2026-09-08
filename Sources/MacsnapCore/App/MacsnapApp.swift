@@ -4,7 +4,7 @@ import Cocoa
 
 @MainActor
 public final class MacsnapApp: NSObject, NSApplicationDelegate {
-    public static let version = "0.0.1"
+    public static let version = "0.0.2"
 
     private let singleInstanceLock = SingleInstanceLock()
     private var overlayWindow: CaptureOverlayWindow?
