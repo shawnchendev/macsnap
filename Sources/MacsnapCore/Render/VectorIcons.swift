@@ -298,6 +298,38 @@ public enum VectorIcons {
             context.addLine(to: CGPoint(x: 12, y: 20))
             context.strokePath()
 
+        case "action-link", "link":
+            // Chain link icon - two interlocked ovals
+            context.setLineWidth(2.0)
+            context.strokeEllipse(in: CGRect(x: 4, y: 4, width: 8, height: 12))
+            context.strokeEllipse(in: CGRect(x: 12, y: 8, width: 8, height: 12))
+            // Connecting bridge
+            context.move(to: CGPoint(x: 12, y: 10))
+            context.addLine(to: CGPoint(x: 14, y: 10))
+            context.move(to: CGPoint(x: 10, y: 14))
+            context.addLine(to: CGPoint(x: 14, y: 14))
+            context.strokePath()
+
+        case "action-edit", "edit":
+            // Pencil/edit icon
+            let pencil = CGMutablePath()
+            pencil.move(to: CGPoint(x: 17, y: 5))
+            pencil.addLine(to: CGPoint(x: 19, y: 7))
+            pencil.addLine(to: CGPoint(x: 7, y: 19))
+            pencil.addLine(to: CGPoint(x: 5, y: 21))
+            pencil.addLine(to: CGPoint(x: 4, y: 20))
+            pencil.addLine(to: CGPoint(x: 16, y: 8))
+            pencil.addLine(to: CGPoint(x: 18, y: 6))
+            pencil.closeSubpath()
+            context.addPath(pencil)
+            context.fillPath()
+            // Pencil tip detail
+            context.setStrokeColor(color.cgColor)
+            context.setLineWidth(1.5)
+            context.move(to: CGPoint(x: 15, y: 7))
+            context.addLine(to: CGPoint(x: 17, y: 5))
+            context.strokePath()
+
         case "action-discard", "discard", "action-close", "close":
             context.move(to: CGPoint(x: 6, y: 6))
             context.addLine(to: CGPoint(x: 18, y: 18))
