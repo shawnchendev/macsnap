@@ -10,62 +10,12 @@ Built in Swift 6 on AppKit, CoreGraphics, and Apple Vision.
 
 ## Features
 
-- **Capture Modes**:
-  - Freeform region selection.
-  - Window selection with live hover detection and keyboard navigation.
-  - Full-screen capture.
-  - Scrolling region capture with frame stitching.
-- **Pointer-Side Measurement Ruler**:
-  - Shows cursor coordinates `(x, y)` while idle.
-  - Shows frame size in native export pixels (`1920 × 1080 px`) while sizing a region, window, or crop handle.
-- **Top Tab Strip**:
-  - Switch capture mode anytime: **Region**, **Window**, **Scrolling Region**, **Fullscreen**.
-  - `Space` steps through tabs; `S` toggles scrolling mode; `Ctrl+A` or `Cmd+A` triggers fullscreen.
-- **Recents Shelf**:
-  - Displays the 5 most recent captures as small cards stacked along the right edge.
-  - Hovering smoothly fans them out; clicking any card reopens that capture in the editor with all vector annotations and undo history intact!
-- **Non-Destructive Operation Log**:
-  - Every action is an entry in `OperationLog`.
-  - Exact, unlimited Undo/Redo (`⌘Z` / `⇧⌘Z`).
-  - Rebuilding the image is a pure function of the log.
-  - Sidecar `.png.json` files let you close, crash-recover, or reopen any capture with its layers still editable.
-- **8 External Recropping Handles**:
-  - Dragging crop handles resizes the screenshot boundaries.
-- **Canvas Growth Modes (`G` / `Shift+G`)**:
-  - **Framed** (default): adds backdrop mat around drawn layers.
-  - **Overflow**: tight growth only on sides needed by annotations, transparent background.
-  - **Image**: clips strictly to the original screenshot bounds.
-- **Backdrops (`B` / `Shift+B`)**:
-  - Mesh gradients: **Slate**, **Aurora**, **Sunset**, **Lagoon**, **Violet**.
-  - **Window Gray** with soft ambient-plus-key drop shadow.
-  - **Custom** image backdrops.
-  - **Off / None** for transparency.
-  - `Shift+B` toggles the card's drop shadow.
-- **Vector Tools**:
-  - `V`: Select / Move / Resize / Scale layers with mouse wheel.
-  - `A`: Arrow (with 45° snapping on `Shift`).
-  - `L`: Straight line (with 45° snapping on `Shift`).
-  - `F`: Freehand stroke (smoothed points).
-  - `H`: Highlighter:
-    - **Snap mode** (default): detects text rows using horizontal edge density and locks straight across the text row at the exact font height.
-    - **Normal mode**: freehand highlighter. Press `H` again to toggle.
-  - `S`: Spotlight / Loupe magnifier (1.5x–4x zoom, shape cycle: ellipse, rectangle, rounded rectangle).
-  - `C`: Numbered counter marker (1, 2, 3... auto-incrementing circular badge).
-  - `R`: Rectangle (hollow or filled, `Alt+Wheel` rounds corners, `Shift` for 1:1 square).
-  - `E`: Ellipse (hollow or filled, `Shift` for circle).
-  - `D`: Redaction (Pixelate randomized mosaic or Solid opaque blackout). Irreversibly destroys pixels in exports and under loupes.
-  - `X`: Cut tool (drag a band horizontally or vertically, preview shaded strip with dashed seam, release to collapse gap and shift layers).
-  - `T`: Text label on a cream readability pill, outline, or plain (`Shift+T` cycles Neucha, JetBrains Mono, and Inter Display).
-  - `O`: OCR (recognizes text using Apple Neural Engine Vision framework, copies text to clipboard, and shows preview).
-  - `I`: Eyedropper (samples pixel color directly into custom palette).
-- **Color Palette**:
-  - 8 preset colors (`1`–`8`): `#ff375f`, `#ff9f0a`, `#ffd60a`, `#30d158`, `#0a84ff`, `#bf5af2`, `#000000`, `#ffffff`.
-- **Pinned Captures (`P`)**:
-  - Floating, always-on-top window on bottom-right of screen.
-  - Hover reveals controls: **Edit** (reopens in macsnap), **Copy**, **Link** (copies file path), **Drag handle** (drag file into Slack/Finder), **Resize** with mouse wheel, **Close**.
-- **Single-Instance Hotkey Toggle**:
-  - Running `macsnap` while an overlay is open sends `SIGTERM` and cleanly closes the overlay.
-  - Pressing your screenshot hotkey once opens the overlay, and pressing it again closes it!
+- **Capture**: freeform region, window (hover highlight + click or `Enter`, arrow-key navigation), fullscreen, and scrolling region with Manual/Auto stitching.
+- **Overlay**: mode tabs (`Space` cycles, `S` scroll mode, `Cmd+A` fullscreen, `R` restores last region), live native-pixel measurement readout, recents shelf (hover to fan out, click to reopen with history intact), `Esc`/`✕` to dismiss.
+- **Non-destructive editing**: every action is an `OperationLog` entry — unlimited undo/redo, crash recovery and re-editing via sidecar `.png.json` files.
+- **Canvas**: 8 recrop handles, growth modes (`G`: Framed / Overflow / Image), backdrops (`B`: Slate, Aurora, Sunset, Lagoon, Violet, Gray, Custom, Off; `Shift+B` shadow toggle).
+- **Tools** (`V A L F H S C R E D X T O I`): select/move/resize, arrow, line, freehand, text-snapping highlighter, spotlight loupe, numbered markers, rectangle, ellipse, mosaic/solid redaction, cut-collapse, text labels (3 fonts), Vision OCR, eyedropper — with 8 color presets (`1`–`8`).
+- **Outputs**: copy/save/both, floating pinned captures (`P`, always-on-top with edit/copy/link/drag/resize), single-instance hotkey toggle (press again to dismiss).
 
 ---
 
