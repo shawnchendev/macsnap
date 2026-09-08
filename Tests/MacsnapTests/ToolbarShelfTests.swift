@@ -24,13 +24,13 @@ final class ToolbarShelfTests: XCTestCase {
 
     func testShapeToolbarIconFollowsActiveTool() {
         let toolbar = ToolbarView()
-        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-shape")
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-rectangle", "rectangle is the initial selection")
         toolbar.activeToolAction = "tool-rectangle"
         XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-rectangle")
         toolbar.activeToolAction = "tool-ellipse"
         XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-ellipse")
         toolbar.activeToolAction = "tool-arrow"
-        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-shape")
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-rectangle", "non-shape tools fall back to rectangle")
     }
 
     func testShelfLayoutInsideScreen() {

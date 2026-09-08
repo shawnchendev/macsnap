@@ -415,13 +415,10 @@ public final class ToolbarView: @unchecked Sendable {
     }
 
     /// Glyph for the Shape button: follows the active shape tool so the bar
-    /// reflects the current selection, falling back to the combo glyph.
+    /// reflects the current selection, defaulting to rectangle (the initial
+    /// selection) for any non-shape tool.
     public func shapeToolbarIcon() -> String {
-        switch activeToolAction {
-        case "tool-rectangle": return "tool-rectangle"
-        case "tool-ellipse": return "tool-ellipse"
-        default: return "tool-shape"
-        }
+        activeToolAction == "tool-ellipse" ? "tool-ellipse" : "tool-rectangle"
     }
 
     public func colorName(at index: Int) -> String {
@@ -575,8 +572,10 @@ public final class ToolbarView: @unchecked Sendable {
         context.setLineWidth(1.0)
         context.strokePath()
 
+        // Rectangle is the initial selection: highlighted unless ellipse is active.
+        let rectActive = activeToolAction != "tool-ellipse"
         drawShelfIconButton(in: context, rect: layout.rectangle, iconAction: "tool-rectangle",
-                            active: activeToolAction == "tool-rectangle", hovered: shapeShelfHover == .rectangle)
+                            active: rectActive, hovered: shapeShelfHover == .rectangle)
         drawShelfIconButton(in: context, rect: layout.ellipse, iconAction: "tool-ellipse",
                             active: activeToolAction == "tool-ellipse", hovered: shapeShelfHover == .ellipse)
         drawShelfFillButton(in: context, rect: layout.filled,
