@@ -276,12 +276,6 @@ Environment variable overrides:
 
 ---
 
-## Acknowledgements
-
-macsnap's capture and annotation workflow is heavily inspired by [omasnap](https://github.com/tobi/omasnap) by Tobi Lütke — region/window/scrolling capture modes, the scrolling stitcher approach, the recents shelf, OCR, and many interaction patterns were adapted from it to native macOS. Thank you to Tobi and the omasnap contributors.
-
----
-
 ## License
 
 MIT License. Bundled fonts (Neucha, JetBrains Mono, Inter Display) are licensed under the SIL Open Font License.
