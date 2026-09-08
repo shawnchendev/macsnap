@@ -2233,7 +2233,6 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         else if action == "action-copy" { finish(outputMode: .copy) }
         else if action == "action-save" { finish(outputMode: .save) }
         else if action == "action-pin" { pinCapture() }
-        else if action == "action-finish" { finish(outputMode: .both) }
         else if action == "style-color" {
             toolbar.colorShelfOpen.toggle()
             toolbar.colorShelfHover = nil

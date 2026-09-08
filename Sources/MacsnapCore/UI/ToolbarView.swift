@@ -71,18 +71,22 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "style-canvas", shortcut: "G", tooltip: "Canvas Growth", isTool: false))
         list.append(ToolbarItem(action: "divider-2", shortcut: "", tooltip: "", isTool: false))
 
-        // 3. Tools
+        // 3. Tools, sub-grouped with dividers
         list.append(ToolbarItem(action: "tool-select", shortcut: "V", tooltip: "Select / Move"))
+        list.append(ToolbarItem(action: "divider-5", shortcut: "", tooltip: "", isTool: false))
         list.append(ToolbarItem(action: "tool-arrow", shortcut: "A", tooltip: "Arrow"))
         list.append(ToolbarItem(action: "tool-line", shortcut: "L", tooltip: "Straight Line"))
         list.append(ToolbarItem(action: "tool-freehand", shortcut: "F", tooltip: "Freehand"))
         list.append(ToolbarItem(action: "tool-highlighter", shortcut: "H", tooltip: "Highlighter"))
-        list.append(ToolbarItem(action: "tool-spotlight", shortcut: "S", tooltip: "Spotlight / Loupe"))
-        list.append(ToolbarItem(action: "tool-marker", shortcut: "C", tooltip: "Step Counter"))
+        list.append(ToolbarItem(action: "divider-6", shortcut: "", tooltip: "", isTool: false))
         list.append(ToolbarItem(action: "tool-rectangle", shortcut: "R", tooltip: "Rectangle"))
         list.append(ToolbarItem(action: "tool-ellipse", shortcut: "E", tooltip: "Ellipse"))
+        list.append(ToolbarItem(action: "tool-marker", shortcut: "C", tooltip: "Step Counter"))
+        list.append(ToolbarItem(action: "divider-7", shortcut: "", tooltip: "", isTool: false))
+        list.append(ToolbarItem(action: "tool-spotlight", shortcut: "S", tooltip: "Spotlight / Loupe"))
         list.append(ToolbarItem(action: "tool-redact", shortcut: "D", tooltip: "Redact"))
         list.append(ToolbarItem(action: "tool-cut", shortcut: "X", tooltip: "Cut Band"))
+        list.append(ToolbarItem(action: "divider-8", shortcut: "", tooltip: "", isTool: false))
         list.append(ToolbarItem(action: "tool-text", shortcut: "T", tooltip: "Text Label"))
         list.append(ToolbarItem(action: "tool-ocr", shortcut: "O", tooltip: "OCR Recognition"))
         list.append(ToolbarItem(action: "divider-3", shortcut: "", tooltip: "", isTool: false))
@@ -95,7 +99,6 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "action-copy", shortcut: "⌘C", tooltip: "Copy PNG", isTool: false))
         list.append(ToolbarItem(action: "action-save", shortcut: "⌘S", tooltip: "Save PNG", isTool: false))
         list.append(ToolbarItem(action: "action-pin", shortcut: "P", tooltip: "Pin Capture", isTool: false))
-        list.append(ToolbarItem(action: "action-finish", shortcut: "⏎", tooltip: "Done (Copy & Save)", isTool: false))
         list.append(ToolbarItem(action: "action-discard", shortcut: "Esc", tooltip: "Discard", isTool: false))
 
         self.items = list
@@ -111,10 +114,6 @@ public final class ToolbarView: @unchecked Sendable {
         for item in items {
             if item.action.hasPrefix("divider") {
                 totalW += 8.0
-            } else if item.action.hasPrefix("color") {
-                totalW += 22.0 + itemSpacing
-            } else if item.action == "action-finish" {
-                totalW += 44.0 + itemSpacing
             } else {
                 totalW += itemW + itemSpacing
             }
@@ -137,17 +136,6 @@ public final class ToolbarView: @unchecked Sendable {
                 let rect = CGRect(x: currentX + 3, y: centerY - 10, width: 1, height: 20)
                 result.append((item, rect))
                 currentX += 8.0
-            } else if item.action.hasPrefix("color") {
-                let size: CGFloat = 20.0
-                let rect = CGRect(x: currentX, y: centerY - size / 2.0, width: size, height: size)
-                result.append((item, rect))
-                currentX += size + 4.0
-            } else if item.action == "action-finish" {
-                let w: CGFloat = 44.0
-                let h: CGFloat = 28.0
-                let rect = CGRect(x: currentX, y: centerY - h / 2.0, width: w, height: h)
-                result.append((item, rect))
-                currentX += w + 4.0
             } else {
                 let size: CGFloat = 28.0
                 let rect = CGRect(x: currentX, y: centerY - size / 2.0, width: size, height: size)
@@ -194,43 +182,12 @@ public final class ToolbarView: @unchecked Sendable {
             let isSelected = (item.isTool && item.action == activeToolAction)
                 || (item.action == "style-color" && colorShelfOpen)
 
-            if item.action.hasPrefix("color") {
-                // Color swatch
-                if let hex = item.colorHex, let color = NSColor(hex: hex) {
-                    context.saveGState()
-                    let circlePath = CGPath(ellipseIn: rect, transform: nil)
-                    context.addPath(circlePath)
-                    context.setFillColor(color.cgColor)
-                    context.fillPath()
-
-                    if activeColorHex.lowercased() == hex.lowercased() {
-                        context.setStrokeColor(NSColor.white.cgColor)
-                        context.setLineWidth(2.5)
-                        context.strokeEllipse(in: rect.insetBy(dx: -2, dy: -2))
-                    } else if isHovered {
-                        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.6).cgColor)
-                        context.setLineWidth(1.5)
-                        context.strokeEllipse(in: rect.insetBy(dx: -1, dy: -1))
-                    }
-                    context.restoreGState()
-                }
-            } else if item.action == "action-finish" {
-                // Enter / Finish button
-                context.saveGState()
-                let btnPath = CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
-                context.addPath(btnPath)
-                let btnColor = isHovered ? NSColor.systemGreen.blended(withFraction: 0.2, of: .white)! : NSColor.systemGreen
-                context.setFillColor(btnColor.cgColor)
-                context.fillPath()
-
-                let font = NSFont.systemFont(ofSize: 11, weight: .bold)
-                let str = NSAttributedString(string: "Done", attributes: [
-                    .font: font,
-                    .foregroundColor: NSColor.white
-                ])
-                let size = str.size()
-                str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
-                context.restoreGState()
+            if item.action == "action-finish" {
+                // Removed: Enter already copies+saves. (Branch kept harmless.)
+                continue
+            } else if item.action.hasPrefix("color") {
+                // Removed swatches now live in the color shelf. (Kept harmless.)
+                continue
             } else {
                 // Icon button
                 context.saveGState()
@@ -251,7 +208,10 @@ public final class ToolbarView: @unchecked Sendable {
                 }
 
                 let iconColor: NSColor
-                if item.action == "action-discard" && isHovered {
+                if item.action == "style-color", let picked = NSColor(hex: activeColorHex) {
+                    // Picker glyph wears the current color.
+                    iconColor = picked
+                } else if item.action == "action-discard" && isHovered {
                     iconColor = NSColor(red: 1.0, green: 0.35, blue: 0.35, alpha: 1.0)
                 } else if isSelected {
                     iconColor = NSColor.white
