@@ -2676,10 +2676,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             // Save sidecar op-log JSON
             let logURL = fileURL.appendingPathExtension("json")
             try? opLog.save(to: logURL)
-
-            // Shelve to recents
-            recentsShelf.saveToRecent(image: rendered, log: opLog)
         }
+
+        // Shelve every finished capture (copy, save, or both) so the recents
+        // shelf reflects what was actually captured, like omasnap.
+        recentsShelf.saveToRecent(image: rendered, log: opLog)
 
         self.window?.close()
         NSApplication.shared.terminate(nil)

@@ -296,4 +296,28 @@ final class WindowAndScrollTests: XCTestCase {
         MenuBarSupport.markWelcomed(stateDir: state)
         XCTAssertFalse(MenuBarSupport.needsWelcome(stateDir: state))
     }
+
+    func testSaveToRecentShelvesCapture() {
+        // Redirect the shelf to a temp dir so the test never touches home.
+        let recent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: recent, withIntermediateDirectories: true)
+        defer {
+            unsetenv("MACSNAP_RECENT_DIR")
+            try? FileManager.default.removeItem(at: recent)
+        }
+        setenv("MACSNAP_RECENT_DIR", recent.path, 1)
+
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let ctx = CGContext(
+            data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 128,
+            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let shelf = RecentsShelfView()
+        XCTAssertTrue(shelf.items.isEmpty)
+        shelf.saveToRecent(image: ctx.makeImage()!, log: OperationLog())
+        XCTAssertEqual(shelf.items.count, 1)
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: recent.path)) ?? []
+        XCTAssertTrue(files.contains { $0.hasSuffix(".png") })
+        XCTAssertTrue(files.contains { $0.hasSuffix(".png.json") })
+    }
 }
