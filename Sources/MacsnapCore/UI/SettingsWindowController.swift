@@ -137,8 +137,8 @@ public final class SettingsWindowController: NSWindowController {
     private func refitWindowToContent() {
         guard let window, let content = window.contentView else { return }
         window.layoutIfNeeded()
-        // generalH: header + gaps + shotsCard(106) + header + gaps + systemCard(50)
-        let generalH: CGFloat = 14 + 6 + 106 + 14 + 14 + 6 + 50
+        // generalH: header + gaps + shotsCard(127) + header + gaps + systemCard(50)
+        let generalH: CGFloat = 14 + 6 + 127 + 14 + 14 + 6 + 50
         let hintH = hotkeysHintLabel?.fittingSize.height ?? 28
         let hotkeysH: CGFloat = 14 + 6 + 191 + 8 + hintH
         let hostH = max(generalH, hotkeysH)
@@ -210,7 +210,7 @@ public final class SettingsWindowController: NSWindowController {
         let shotsCard = makeCard()
         let shotsStack = NSStackView()
         shotsStack.orientation = .vertical
-        shotsStack.spacing = 10
+        shotsStack.spacing = 12
         shotsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let folderRow = NSStackView()
@@ -297,9 +297,9 @@ public final class SettingsWindowController: NSWindowController {
         ])
         // Explicit heights: NSBox doesn't reliably derive height from its
         // content here, so cards are sized arithmetically from their rows
-        // (24pt rows, 10pt stack gaps, 12pt card padding).
-        // shotsCard: 24 + 10 + 24 + 10 + 14 + 24 = 106
-        shotsCard.heightAnchor.constraint(equalToConstant: 106).isActive = true
+        // (24pt rows, 12pt stack gaps, 12pt card padding).
+        // shotsCard: 24 + 12 + 5 + 12 + 24 + 12 + 14 + 24 = 127
+        shotsCard.heightAnchor.constraint(equalToConstant: 127).isActive = true
         // systemCard: 26 + 24 = 50
         systemCard.heightAnchor.constraint(equalToConstant: 50).isActive = true
         shotsCardBox = shotsCard

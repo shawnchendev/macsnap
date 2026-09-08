@@ -53,7 +53,7 @@ final class SettingsLayoutTests: XCTestCase {
         let generalBoxes = boxes(in: content.subviews[1])
         XCTAssertEqual(generalBoxes.count, 2)
         XCTAssertEqual(Double(generalBoxes[0].frame.width), 404, accuracy: 0.5)
-        XCTAssertEqual(Double(generalBoxes[0].frame.height), 106, accuracy: 0.5)
+        XCTAssertEqual(Double(generalBoxes[0].frame.height), 127, accuracy: 0.5)
         XCTAssertEqual(Double(generalBoxes[1].frame.width), 404, accuracy: 0.5)
         XCTAssertEqual(Double(generalBoxes[1].frame.height), 50, accuracy: 0.5)
         XCTAssertTrue(generalBoxes[0].frame.intersects(generalBoxes[1].frame) == false)
