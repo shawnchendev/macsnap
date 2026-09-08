@@ -123,6 +123,11 @@ public enum VectorIcons {
             context.addLine(to: CGPoint(x: 19, y: 12))
             context.strokePath()
 
+        case "tool-shape", "shape":
+            // Rectangle outline holding an ellipse.
+            context.stroke(CGRect(x: 3.5, y: 5, width: 17, height: 14))
+            context.strokeEllipse(in: CGRect(x: 7.5, y: 8, width: 9, height: 8))
+
         case "tool-text":
             context.move(to: CGPoint(x: 5, y: 5))
             context.addLine(to: CGPoint(x: 19, y: 5))

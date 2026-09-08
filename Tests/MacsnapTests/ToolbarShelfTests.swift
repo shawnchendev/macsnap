@@ -13,6 +13,15 @@ final class ToolbarShelfTests: XCTestCase {
         XCTAssertFalse(toolbar.colorShelfOpen)
     }
 
+    func testShapeButtonReplacesShapeTools() {
+        let toolbar = ToolbarView()
+        XCTAssertTrue(toolbar.items.contains { $0.action == "tool-shape" })
+        XCTAssertFalse(toolbar.items.contains { $0.action == "tool-rectangle" })
+        XCTAssertFalse(toolbar.items.contains { $0.action == "tool-ellipse" })
+        XCTAssertFalse(toolbar.shapeShelfOpen)
+        XCTAssertFalse(toolbar.shapeFilled)
+    }
+
     func testShelfLayoutInsideScreen() {
         let toolbar = ToolbarView()
         let layout = toolbar.colorShelfLayout(screenBounds: bounds)
@@ -38,5 +47,27 @@ final class ToolbarShelfTests: XCTestCase {
         XCTAssertEqual(toolbar.colorShelfHit(at: CGPoint(x: layout.custom.midX, y: layout.custom.midY), screenBounds: bounds), .custom)
         XCTAssertEqual(toolbar.colorShelfHit(at: CGPoint(x: layout.eyedropper.midX, y: layout.eyedropper.midY), screenBounds: bounds), .eyedropper)
         XCTAssertNil(toolbar.colorShelfHit(at: CGPoint(x: 10, y: 500), screenBounds: bounds))
+    }
+
+    func testShapeShelfLayoutInsideScreen() {
+        let toolbar = ToolbarView()
+        let layout = toolbar.shapeShelfLayout(screenBounds: bounds)
+        XCTAssertTrue(bounds.contains(layout.panel), "panel must be on screen: \(layout.panel)")
+        for rect in [layout.rectangle, layout.ellipse, layout.filled] {
+            XCTAssertTrue(layout.panel.contains(rect), "\(rect) must be inside panel")
+        }
+        XCTAssertLessThanOrEqual(layout.rectangle.maxX, layout.ellipse.minX)
+        XCTAssertLessThanOrEqual(layout.ellipse.maxX, layout.filled.minX)
+    }
+
+    func testShapeShelfHitTestGatedOnOpen() {
+        let toolbar = ToolbarView()
+        let layout = toolbar.shapeShelfLayout(screenBounds: bounds)
+        XCTAssertNil(toolbar.shapeShelfHit(at: CGPoint(x: layout.rectangle.midX, y: layout.rectangle.midY), screenBounds: bounds))
+        toolbar.shapeShelfOpen = true
+        XCTAssertEqual(toolbar.shapeShelfHit(at: CGPoint(x: layout.rectangle.midX, y: layout.rectangle.midY), screenBounds: bounds), .rectangle)
+        XCTAssertEqual(toolbar.shapeShelfHit(at: CGPoint(x: layout.ellipse.midX, y: layout.ellipse.midY), screenBounds: bounds), .ellipse)
+        XCTAssertEqual(toolbar.shapeShelfHit(at: CGPoint(x: layout.filled.midX, y: layout.filled.midY), screenBounds: bounds), .filled)
+        XCTAssertNil(toolbar.shapeShelfHit(at: CGPoint(x: 10, y: 500), screenBounds: bounds))
     }
 }

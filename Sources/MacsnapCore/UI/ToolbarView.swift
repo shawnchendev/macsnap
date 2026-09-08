@@ -38,6 +38,17 @@ public final class ToolbarView: @unchecked Sendable {
         case eyedropper
     }
 
+    // Shape shelf (opened by tool-shape). Only one shelf opens at a time.
+    public var shapeShelfOpen: Bool = false
+    public var shapeShelfHover: ShapeShelfHot?
+    public var shapeFilled: Bool = false
+
+    public enum ShapeShelfHot: Equatable, Sendable {
+        case rectangle
+        case ellipse
+        case filled
+    }
+
     public func effectiveSafeAreaTop() -> CGFloat {
         if let explicit = safeAreaTop {
             return explicit
@@ -79,8 +90,7 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "tool-freehand", shortcut: "F", tooltip: "Freehand"))
         list.append(ToolbarItem(action: "tool-highlighter", shortcut: "H", tooltip: "Highlighter"))
         list.append(ToolbarItem(action: "divider-6", shortcut: "", tooltip: "", isTool: false))
-        list.append(ToolbarItem(action: "tool-rectangle", shortcut: "R", tooltip: "Rectangle"))
-        list.append(ToolbarItem(action: "tool-ellipse", shortcut: "E", tooltip: "Ellipse"))
+        list.append(ToolbarItem(action: "tool-shape", shortcut: "R", tooltip: "Shape"))
         list.append(ToolbarItem(action: "tool-marker", shortcut: "C", tooltip: "Step Counter"))
         list.append(ToolbarItem(action: "divider-7", shortcut: "", tooltip: "", isTool: false))
         list.append(ToolbarItem(action: "tool-spotlight", shortcut: "S", tooltip: "Spotlight / Loupe"))
@@ -181,6 +191,9 @@ public final class ToolbarView: @unchecked Sendable {
             let isHovered = (hoveredAction == item.action)
             let isSelected = (item.isTool && item.action == activeToolAction)
                 || (item.action == "style-color" && colorShelfOpen)
+                || (item.action == "tool-shape" && (shapeShelfOpen
+                    || activeToolAction == "tool-rectangle"
+                    || activeToolAction == "tool-ellipse"))
 
             if item.action == "action-finish" {
                 // Removed: Enter already copies+saves. (Branch kept harmless.)
@@ -235,6 +248,11 @@ public final class ToolbarView: @unchecked Sendable {
         // Color shelf panel below the bar.
         if colorShelfOpen {
             drawColorShelf(in: context, screenBounds: screenBounds)
+        }
+
+        // Shape shelf panel below the bar.
+        if shapeShelfOpen {
+            drawShapeShelf(in: context, screenBounds: screenBounds)
         }
     }
 
@@ -480,6 +498,115 @@ public final class ToolbarView: @unchecked Sendable {
             context.setLineWidth(1.5)
             context.strokeEllipse(in: rect.insetBy(dx: -1, dy: -1))
         }
+        context.restoreGState()
+    }
+
+    // MARK: - Shape shelf
+
+    public struct ShapeShelfLayout: Sendable {
+        public var panel: CGRect
+        public var rectangle: CGRect
+        public var ellipse: CGRect
+        public var filled: CGRect
+    }
+
+    /// Panel below the bar anchored under the Shape button (clamped on
+    /// screen): rectangle, ellipse, filled toggle.
+    public func shapeShelfLayout(screenBounds: CGRect) -> ShapeShelfLayout {
+        let barRect = toolbarRect(screenBounds: screenBounds)
+        let anchorX: CGFloat
+        if let btn = itemRects(screenBounds: screenBounds).first(where: { $0.item.action == "tool-shape" }) {
+            anchorX = btn.rect.midX
+        } else {
+            anchorX = barRect.midX
+        }
+        let btnW: CGFloat = 96.0
+        let filledW: CGFloat = 84.0
+        let btnH: CGFloat = 28.0
+        let gap: CGFloat = 8.0
+        let pad: CGFloat = 12.0
+        let panelW = pad * 2 + btnW + gap + btnW + gap + filledW
+        let panelH = pad * 2 + btnH
+        var panelX = anchorX - panelW / 2.0
+        panelX = min(max(panelX, 12.0), max(12.0, screenBounds.maxX - panelW - 12.0))
+        let panel = CGRect(x: panelX, y: barRect.maxY + 8.0, width: panelW, height: panelH)
+
+        var x = panel.minX + pad
+        let y = panel.minY + pad
+        let rectangle = CGRect(x: x, y: y, width: btnW, height: btnH)
+        x += btnW + gap
+        let ellipse = CGRect(x: x, y: y, width: btnW, height: btnH)
+        x += btnW + gap
+        let filled = CGRect(x: x, y: y, width: filledW, height: btnH)
+        return ShapeShelfLayout(panel: panel, rectangle: rectangle, ellipse: ellipse, filled: filled)
+    }
+
+    public func shapeShelfHit(at point: CGPoint, screenBounds: CGRect) -> ShapeShelfHot? {
+        guard shapeShelfOpen else { return nil }
+        let layout = shapeShelfLayout(screenBounds: screenBounds)
+        if layout.rectangle.contains(point) { return .rectangle }
+        if layout.ellipse.contains(point) { return .ellipse }
+        if layout.filled.contains(point) { return .filled }
+        return nil
+    }
+
+    private func drawShapeShelf(in context: CGContext, screenBounds: CGRect) {
+        let layout = shapeShelfLayout(screenBounds: screenBounds)
+
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -6), blur: 18, color: NSColor(white: 0, alpha: 0.38).cgColor)
+        let panelPath = CGPath(roundedRect: layout.panel, cornerWidth: 10, cornerHeight: 10, transform: nil)
+        context.addPath(panelPath)
+        context.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 0.94).cgColor)
+        context.fillPath()
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(panelPath)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        drawShelfPill(in: context, rect: layout.rectangle, title: "Rectangle",
+                      active: false, hovered: shapeShelfHover == .rectangle)
+        drawShelfPill(in: context, rect: layout.ellipse, title: "Ellipse",
+                      active: false, hovered: shapeShelfHover == .ellipse)
+        drawShelfPill(in: context, rect: layout.filled, title: shapeFilled ? "Filled" : "Hollow",
+                      active: shapeFilled, hovered: shapeShelfHover == .filled)
+
+        if let hot = shapeShelfHover {
+            let tip: ToolbarItem
+            switch hot {
+            case .rectangle:
+                tip = ToolbarItem(action: "shelf-rectangle", shortcut: "R", tooltip: "Rectangle", isTool: false)
+            case .ellipse:
+                tip = ToolbarItem(action: "shelf-ellipse", shortcut: "E", tooltip: "Ellipse", isTool: false)
+            case .filled:
+                tip = ToolbarItem(action: "shelf-filled", shortcut: "", tooltip: "Fill shapes", isTool: false)
+            }
+            let barRect = toolbarRect(screenBounds: screenBounds)
+            drawTooltip(for: tip, itemRect: layout.panel, barRect: barRect, in: context, screenBounds: screenBounds)
+        }
+        context.restoreGState()
+    }
+
+    private func drawShelfPill(in context: CGContext, rect: CGRect, title: String, active: Bool, hovered: Bool) {
+        context.saveGState()
+        let path = CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil)
+        context.addPath(path)
+        if active {
+            context.setFillColor(NSColor(white: 1.0, alpha: 0.22).cgColor)
+        } else if hovered {
+            context.setFillColor(NSColor(white: 1.0, alpha: 0.10).cgColor)
+        } else {
+            context.setFillColor(NSColor(white: 1.0, alpha: 0.05).cgColor)
+        }
+        context.fillPath()
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let str = NSAttributedString(string: title, attributes: [
+            .font: font,
+            .foregroundColor: NSColor(white: active || hovered ? 1.0 : 0.85, alpha: 1.0)
+        ])
+        let size = str.size()
+        str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
         context.restoreGState()
     }
 }

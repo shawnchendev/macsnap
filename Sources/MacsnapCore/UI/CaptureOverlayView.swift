@@ -1199,6 +1199,20 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 self.toolTip = nil
             }
 
+            // Shelf hovers take precedence for cursor/tooltip.
+            if toolbar.shapeShelfOpen {
+                let hot = toolbar.shapeShelfHit(at: currentMousePoint, screenBounds: self.bounds)
+                toolbar.shapeShelfHover = hot
+                if hot != nil {
+                    NSCursor.pointingHand.set()
+                    hoveredCropHandleIndex = nil
+                    needsDisplay = true
+                    return
+                }
+            } else if toolbar.shapeShelfHover != nil {
+                toolbar.shapeShelfHover = nil
+            }
+
             // Color shelf hover takes precedence for cursor/tooltip.
             if toolbar.colorShelfOpen {
                 let hot = toolbar.colorShelfHit(at: currentMousePoint, screenBounds: self.bounds)
@@ -1327,6 +1341,24 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                     toolbar.colorShelfOpen = false
                 case .eyedropper:
                     setTool(.eyedropper)
+                }
+                needsDisplay = true
+                return
+            }
+
+            // Check shape shelf click (open via the Shape button).
+            if toolbar.shapeShelfOpen,
+               let hot = toolbar.shapeShelfHit(at: dragStart, screenBounds: self.bounds) {
+                switch hot {
+                case .rectangle:
+                    setTool(.rectangle)
+                    toolbar.shapeShelfOpen = false
+                case .ellipse:
+                    setTool(.ellipse)
+                    toolbar.shapeShelfOpen = false
+                case .filled:
+                    shapeFilled.toggle()
+                    toolbar.shapeFilled = shapeFilled
                 }
                 needsDisplay = true
                 return
@@ -1821,8 +1853,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             cancelActiveTextEditing()
             return
         }
-        if toolbar.colorShelfOpen {
+        if toolbar.shapeShelfOpen || toolbar.colorShelfOpen {
+            toolbar.shapeShelfOpen = false
             toolbar.colorShelfOpen = false
+            toolbar.shapeShelfHover = nil
             toolbar.colorShelfHover = nil
             needsDisplay = true
             return
@@ -2235,6 +2269,15 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         else if action == "action-pin" { pinCapture() }
         else if action == "style-color" {
             toolbar.colorShelfOpen.toggle()
+            toolbar.shapeShelfOpen = false
+            toolbar.colorShelfHover = nil
+            toolbar.shapeShelfHover = nil
+            needsDisplay = true
+        }
+        else if action == "tool-shape" {
+            toolbar.shapeShelfOpen.toggle()
+            toolbar.colorShelfOpen = false
+            toolbar.shapeShelfHover = nil
             toolbar.colorShelfHover = nil
             needsDisplay = true
         }
