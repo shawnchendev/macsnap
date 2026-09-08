@@ -116,4 +116,87 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(item.title, "Capture Region")
         XCTAssertEqual(item.keyEquivalent, "")
     }
+
+    // MARK: - Recorder arming suspends live hotkeys
+
+    private static func mouseClick() -> NSEvent {
+        NSEvent.mouseEvent(
+            with: .leftMouseDown, location: .zero,
+            modifierFlags: [], timestamp: 0, windowNumber: 0,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        )!
+    }
+
+    private static func keyPress(keyCode: UInt16, modifiers: NSEvent.ModifierFlags = [], characters: String = "") -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+            windowNumber: 0, context: nil, characters: characters,
+            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode
+        )!
+    }
+
+    private func firstRecorder(in view: NSView) -> HotkeyRecorderButton? {
+        if let button = view as? HotkeyRecorderButton { return button }
+        for sub in view.subviews {
+            if let found = firstRecorder(in: sub) { return found }
+        }
+        return nil
+    }
+
+    @MainActor
+    func testRecorderEscCancels() {
+        let button = HotkeyRecorderButton()
+        var changes: [Bool] = []
+        button.onRecordingChange = { changes.append($0) }
+        button.binding = HotkeyBinding.parse("cmd+r")
+        button.mouseDown(with: Self.mouseClick())
+        XCTAssertTrue(button.isRecording)
+        button.keyDown(with: Self.keyPress(keyCode: 53)) // Esc
+        XCTAssertFalse(button.isRecording)
+        XCTAssertEqual(button.binding, HotkeyBinding.parse("cmd+r"), "Esc keeps the previous binding")
+        XCTAssertEqual(changes, [true, false])
+    }
+
+    @MainActor
+    func testRecorderCapturesCombo() {
+        let button = HotkeyRecorderButton()
+        button.mouseDown(with: Self.mouseClick())
+        button.keyDown(with: Self.keyPress(keyCode: 15, modifiers: [.command], characters: "r"))
+        XCTAssertFalse(button.isRecording)
+        XCTAssertEqual(button.binding?.description, "cmd+r")
+    }
+
+    @MainActor
+    func testRecorderRequiresModifier() {
+        let button = HotkeyRecorderButton()
+        button.mouseDown(with: Self.mouseClick())
+        button.keyDown(with: Self.keyPress(keyCode: 15, characters: "r"))
+        XCTAssertTrue(button.isRecording, "bare keys must not commit")
+        XCTAssertNil(button.binding)
+    }
+
+    @MainActor
+    func testRecorderDeleteClears() {
+        let button = HotkeyRecorderButton()
+        button.binding = HotkeyBinding.parse("cmd+r")
+        button.mouseDown(with: Self.mouseClick())
+        button.keyDown(with: Self.keyPress(keyCode: 51)) // Delete
+        XCTAssertFalse(button.isRecording)
+        XCTAssertNil(button.binding)
+    }
+
+    @MainActor
+    func testControllerSuspendsHotkeysWhileRecording() {
+        let controller = SettingsWindowController()
+        var states: [Bool] = []
+        controller.onRecordingChanged = { states.append($0) }
+        guard let content = controller.window?.contentView,
+              let recorder = firstRecorder(in: content) else {
+            XCTFail("no recorder button found")
+            return
+        }
+        recorder.mouseDown(with: Self.mouseClick())
+        recorder.keyDown(with: Self.keyPress(keyCode: 53)) // Esc
+        XCTAssertEqual(states, [true, false])
+    }
 }

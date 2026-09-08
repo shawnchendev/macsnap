@@ -4,8 +4,12 @@ import Cocoa
 /// Open at Login, and global hotkeys. Edits a draft; Save writes
 /// `~/.config/macsnap/macsnap.conf` and applies (hotkeys re-register, login
 /// item flips). Cancel/close discards.
-public final class SettingsWindowController: NSWindowController {
+public final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     public var onSave: ((AppConfig) -> [String])?
+    /// Fires when global-hotkey suspension should change: true while any
+    /// recorder is armed (live hotkeys must not fire mid-record).
+    public var onRecordingChanged: ((Bool) -> Void)?
+    private var wasRecording = false
 
     private var draft = AppConfig.load()
     private var folderField = NSTextField()
@@ -36,6 +40,7 @@ public final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
+        window.delegate = self
         buildUI()
         reloadDraft()
         refitWindowToContent()
@@ -335,6 +340,7 @@ public final class SettingsWindowController: NSWindowController {
             let recorder = HotkeyRecorderButton()
             recorder.translatesAutoresizingMaskIntoConstraints = false
             recorder.widthAnchor.constraint(equalToConstant: 148).isActive = true
+            recorder.onRecordingChange = { [weak self] _ in self?.recheckRecording() }
             recorders[action] = recorder
             row.addArrangedSubview(label)
             row.addArrangedSubview(spacer)
@@ -477,6 +483,21 @@ public final class SettingsWindowController: NSWindowController {
         aboutView.isHidden = index != 2
     }
 
+    /// Aggregates recorder arming into edge-triggered suspension notices.
+    func recheckRecording() {
+        let now = recorders.values.contains { $0.isRecording }
+        guard now != wasRecording else { return }
+        wasRecording = now
+        onRecordingChanged?(now)
+    }
+
+    /// Disarms every recorder (Save/Cancel/close while armed).
+    func stopAllRecording() {
+        for recorder in recorders.values {
+            recorder.cancelRecording()
+        }
+    }
+
     @objc private func chooseFolder(_ sender: Any?) {
         guard let window = window else { return }
         let panel = NSOpenPanel()
@@ -491,7 +512,14 @@ public final class SettingsWindowController: NSWindowController {
         }
     }
 
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // × discards like Cancel; never leave a recorder armed behind.
+        stopAllRecording()
+        return true
+    }
+
     @objc private func save(_ sender: Any?) {
+        stopAllRecording()
         let folder = folderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let pattern = filenameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !folder.isEmpty, !pattern.isEmpty else {
@@ -537,6 +565,7 @@ public final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func cancel(_ sender: Any?) {
+        stopAllRecording()
         window?.close()
     }
 
@@ -550,7 +579,9 @@ public final class SettingsWindowController: NSWindowController {
 /// is required), Delete clears, Esc cancels. Never fires an action.
 final class HotkeyRecorderButton: NSButton {
     var binding: HotkeyBinding? { didSet { updateTitle() } }
-    private var isRecording = false { didSet { updateTitle() } }
+    private(set) var isRecording = false { didSet { updateTitle() } }
+    /// Fires on every recording-state transition (arm/disarm).
+    var onRecordingChange: ((Bool) -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -566,14 +597,25 @@ final class HotkeyRecorderButton: NSButton {
 
     override var acceptsFirstResponder: Bool { true }
 
+    private func setRecording(_ recording: Bool) {
+        guard isRecording != recording else { return }
+        isRecording = recording
+        onRecordingChange?(recording)
+    }
+
+    /// Forcibly disarms (Save/Cancel/close while armed).
+    func cancelRecording() {
+        setRecording(false)
+    }
+
     override func mouseDown(with event: NSEvent) {
         // Arm recording instead of firing any action.
         window?.makeFirstResponder(self)
-        isRecording = true
+        setRecording(true)
     }
 
     override func resignFirstResponder() -> Bool {
-        isRecording = false
+        setRecording(false)
         return super.resignFirstResponder()
     }
 
@@ -605,13 +647,13 @@ final class HotkeyRecorderButton: NSButton {
     override func keyDown(with event: NSEvent) {
         guard isRecording else { super.keyDown(with: event); return }
         if event.keyCode == 53 { // Esc: cancel
-            isRecording = false
+            setRecording(false)
             window?.makeFirstResponder(window?.contentView)
             return
         }
         if event.keyCode == 51 || event.keyCode == 117 { // Delete: clear
             binding = nil
-            isRecording = false
+            setRecording(false)
             window?.makeFirstResponder(window?.contentView)
             return
         }
@@ -621,7 +663,7 @@ final class HotkeyRecorderButton: NSButton {
             return
         }
         binding = next
-        isRecording = false
+        setRecording(false)
         window?.makeFirstResponder(window?.contentView)
     }
 }

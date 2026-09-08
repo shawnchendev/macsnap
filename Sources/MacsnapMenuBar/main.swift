@@ -33,10 +33,14 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Registers saved global hotkeys; failures are logged (the Settings
     /// panel surfaces them interactively on save).
     private func startHotkeys() {
-        let saved = AppConfig.load().hotkeys
         hotkeys.onFire = { [weak self] action in
             self?.runCapture(arguments: action.captureArguments)
         }
+        registerSavedHotkeys()
+    }
+
+    private func registerSavedHotkeys() {
+        let saved = AppConfig.load().hotkeys
         for action in HotkeyManager.Action.allCases {
             if let binding = saved[action.rawValue] {
                 if !hotkeys.register(action: action, binding: binding) {
@@ -261,6 +265,15 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.onSave = { [weak self] config in
                 guard let self else { return [] }
                 return self.applyHotkeys(config)
+            }
+            controller.onRecordingChanged = { [weak self] recording in
+                // While recording, live hotkeys must not fire (the combo
+                // being pressed is the one under test). Restores after.
+                if recording {
+                    self?.hotkeys.unregisterAll()
+                } else {
+                    self?.registerSavedHotkeys()
+                }
             }
             settingsController = controller
         }
