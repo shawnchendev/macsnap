@@ -1199,6 +1199,20 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 self.toolTip = nil
             }
 
+            // Color shelf hover takes precedence for cursor/tooltip.
+            if toolbar.colorShelfOpen {
+                let hot = toolbar.colorShelfHit(at: currentMousePoint, screenBounds: self.bounds)
+                toolbar.colorShelfHover = hot
+                if hot != nil {
+                    NSCursor.pointingHand.set()
+                    hoveredCropHandleIndex = nil
+                    needsDisplay = true
+                    return
+                }
+            } else if toolbar.colorShelfHover != nil {
+                toolbar.colorShelfHover = nil
+            }
+
             // If highlighter in snap mode, probe text band
             if tool == .highlighter && highlighterMode == .snap {
                 let annPt = toAnnotationPoint(currentMousePoint)
@@ -1294,6 +1308,27 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             // Check toolbar click
             if let action = toolbar.action(at: dragStart, screenBounds: self.bounds) {
                 handleToolbarAction(action)
+                return
+            }
+
+            // Check color shelf click (open via the Colors button).
+            if toolbar.colorShelfOpen,
+               let hot = toolbar.colorShelfHit(at: dragStart, screenBounds: self.bounds) {
+                switch hot {
+                case .preset(let i):
+                    if i < toolbar.paletteColors.count {
+                        activeColorHex = toolbar.paletteColors[i]
+                        toolbar.activeColorHex = activeColorHex
+                    }
+                    toolbar.colorShelfOpen = false
+                case .custom:
+                    activeColorHex = toolbar.customColorHex
+                    toolbar.activeColorHex = activeColorHex
+                    toolbar.colorShelfOpen = false
+                case .eyedropper:
+                    setTool(.eyedropper)
+                }
+                needsDisplay = true
                 return
             }
 
@@ -1786,6 +1821,12 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             cancelActiveTextEditing()
             return
         }
+        if toolbar.colorShelfOpen {
+            toolbar.colorShelfOpen = false
+            toolbar.colorShelfHover = nil
+            needsDisplay = true
+            return
+        }
         if scrollPhase == .modeChoice {
             cancelScrollCapture()
             return
@@ -2193,6 +2234,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         else if action == "action-save" { finish(outputMode: .save) }
         else if action == "action-pin" { pinCapture() }
         else if action == "action-finish" { finish(outputMode: .both) }
+        else if action == "style-color" {
+            toolbar.colorShelfOpen.toggle()
+            toolbar.colorShelfHover = nil
+            needsDisplay = true
+        }
         else if action.hasPrefix("color-") {
             if let idx = Int(action.dropFirst(6)), idx >= 1, idx <= toolbar.paletteColors.count {
                 activeColorHex = toolbar.paletteColors[idx - 1]
@@ -2563,6 +2609,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         if let hex = eyedropperHex(image: pristineSource, x: pxX, y: pxY) {
             self.activeColorHex = hex
             self.toolbar.activeColorHex = hex
+            self.toolbar.customColorHex = hex
             setTool(.select)
             // Visible confirmation: a sampled custom color matches no palette
             // swatch, so without this the click appears to do nothing.

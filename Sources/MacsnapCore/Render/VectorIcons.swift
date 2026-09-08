@@ -300,6 +300,14 @@ public enum VectorIcons {
             context.addLine(to: CGPoint(x: 6, y: 18))
             context.strokePath()
 
+        case "style-color", "color", "palette":
+            // Artist palette: outer ring, thumb hole, three paint dots.
+            context.strokeEllipse(in: CGRect(x: 4, y: 5, width: 16, height: 15))
+            context.strokeEllipse(in: CGRect(x: 14.5, y: 14.5, width: 3.5, height: 3.5))
+            context.fillEllipse(in: CGRect(x: 7.2, y: 8.2, width: 3.2, height: 3.2))
+            context.fillEllipse(in: CGRect(x: 11.4, y: 7.2, width: 3.2, height: 3.2))
+            context.fillEllipse(in: CGRect(x: 8.2, y: 12.4, width: 3.2, height: 3.2))
+
         default:
             context.stroke(CGRect(x: 4, y: 4, width: 16, height: 16))
         }

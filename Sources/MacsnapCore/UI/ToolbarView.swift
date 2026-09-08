@@ -22,9 +22,21 @@ public final class ToolbarView: @unchecked Sendable {
     public private(set) var items: [ToolbarItem] = []
     public var activeToolAction: String = "tool-select"
     public var activeColorHex: String = "#ff375f"
+    public var customColorHex: String = "#ff375f"
     public var paletteColors: [String] = PaletteConfig.defaultColors
     public var hoveredAction: String? = nil
     public var safeAreaTop: CGFloat? = nil
+
+    // Color shelf (popover panel below the bar, opened by style-color).
+    public var colorShelfOpen: Bool = false
+    public var colorShelfHover: ColorShelfHot?
+    public static let colorNames = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Black", "White"]
+
+    public enum ColorShelfHot: Equatable, Sendable {
+        case preset(Int)
+        case custom
+        case eyedropper
+    }
 
     public func effectiveSafeAreaTop() -> CGFloat {
         if let explicit = safeAreaTop {
@@ -73,15 +85,10 @@ public final class ToolbarView: @unchecked Sendable {
         list.append(ToolbarItem(action: "tool-cut", shortcut: "X", tooltip: "Cut Band"))
         list.append(ToolbarItem(action: "tool-text", shortcut: "T", tooltip: "Text Label"))
         list.append(ToolbarItem(action: "tool-ocr", shortcut: "O", tooltip: "OCR Recognition"))
-        list.append(ToolbarItem(action: "tool-eyedropper", shortcut: "I", tooltip: "Eyedropper"))
         list.append(ToolbarItem(action: "divider-3", shortcut: "", tooltip: "", isTool: false))
 
-        // 4. Palette colors (1 to 8)
-        let colorNames = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Black", "White"]
-        for (i, c) in paletteColors.enumerated() {
-            let name = i < colorNames.count ? colorNames[i] : "Color \(i+1)"
-            list.append(ToolbarItem(action: "color-\(i+1)", shortcut: "\(i+1)", tooltip: "\(name) (\(c))", isTool: false, colorHex: c))
-        }
+        // 4. Colors: single picker button opening the color shelf below.
+        list.append(ToolbarItem(action: "style-color", shortcut: "", tooltip: "Colors"))
         list.append(ToolbarItem(action: "divider-4", shortcut: "", tooltip: "", isTool: false))
 
         // 5. Output Actions
@@ -185,6 +192,7 @@ public final class ToolbarView: @unchecked Sendable {
 
             let isHovered = (hoveredAction == item.action)
             let isSelected = (item.isTool && item.action == activeToolAction)
+                || (item.action == "style-color" && colorShelfOpen)
 
             if item.action.hasPrefix("color") {
                 // Color swatch
@@ -262,6 +270,11 @@ public final class ToolbarView: @unchecked Sendable {
            let pair = itemPairs.first(where: { $0.item.action == hoveredAct }),
            !pair.item.action.hasPrefix("divider") {
             drawTooltip(for: pair.item, itemRect: pair.rect, barRect: barRect, in: context, screenBounds: screenBounds)
+        }
+
+        // Color shelf panel below the bar.
+        if colorShelfOpen {
+            drawColorShelf(in: context, screenBounds: screenBounds)
         }
     }
 
@@ -365,5 +378,148 @@ public final class ToolbarView: @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    // MARK: - Color shelf
+
+    public struct ColorShelfLayout: Sendable {
+        public var panel: CGRect
+        public var presets: [CGRect]
+        public var custom: CGRect
+        public var eyedropper: CGRect
+    }
+
+    /// Panel below the bar anchored under the Colors button (clamped on
+    /// screen): 8 presets, custom swatch, eyedropper.
+    public func colorShelfLayout(screenBounds: CGRect) -> ColorShelfLayout {
+        let barRect = toolbarRect(screenBounds: screenBounds)
+        let anchorX: CGFloat
+        if let btn = itemRects(screenBounds: screenBounds).first(where: { $0.item.action == "style-color" }) {
+            anchorX = btn.rect.midX
+        } else {
+            anchorX = barRect.midX
+        }
+        let swatch: CGFloat = 26.0
+        let gap: CGFloat = 10.0
+        let pad: CGFloat = 12.0
+        let dividerZone: CGFloat = gap * 2
+        let panelW = pad * 2 + 8 * swatch + 7 * gap + dividerZone + swatch + gap + swatch
+        let panelH = pad * 2 + swatch
+        var panelX = anchorX - panelW / 2.0
+        panelX = min(max(panelX, 12.0), max(12.0, screenBounds.maxX - panelW - 12.0))
+        let panel = CGRect(x: panelX, y: barRect.maxY + 8.0, width: panelW, height: panelH)
+
+        var x = panel.minX + pad
+        let y = panel.minY + pad
+        var presets: [CGRect] = []
+        for i in 0..<8 {
+            presets.append(CGRect(x: x, y: y, width: swatch, height: swatch))
+            x += swatch
+            if i < 7 { x += gap }
+        }
+        x += dividerZone // breathing room with the divider line centered in it
+        let custom = CGRect(x: x, y: y, width: swatch, height: swatch)
+        x += swatch + gap
+        let eyedropper = CGRect(x: x, y: y, width: swatch, height: swatch)
+        return ColorShelfLayout(panel: panel, presets: presets, custom: custom, eyedropper: eyedropper)
+    }
+
+    public func colorShelfHit(at point: CGPoint, screenBounds: CGRect) -> ColorShelfHot? {
+        guard colorShelfOpen else { return nil }
+        let layout = colorShelfLayout(screenBounds: screenBounds)
+        for (i, rect) in layout.presets.enumerated() {
+            if rect.insetBy(dx: -4, dy: -4).contains(point) { return .preset(i) }
+        }
+        if layout.custom.insetBy(dx: -4, dy: -4).contains(point) { return .custom }
+        if layout.eyedropper.insetBy(dx: -4, dy: -4).contains(point) { return .eyedropper }
+        return nil
+    }
+
+    public func colorName(at index: Int) -> String {
+        let hex = index < paletteColors.count ? paletteColors[index] : ""
+        let name = index < Self.colorNames.count ? Self.colorNames[index] : "Color \(index + 1)"
+        return "\(name) (\(hex))"
+    }
+
+    private func drawColorShelf(in context: CGContext, screenBounds: CGRect) {
+        let layout = colorShelfLayout(screenBounds: screenBounds)
+
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -6), blur: 18, color: NSColor(white: 0, alpha: 0.38).cgColor)
+        let panelPath = CGPath(roundedRect: layout.panel, cornerWidth: 10, cornerHeight: 10, transform: nil)
+        context.addPath(panelPath)
+        context.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 0.94).cgColor)
+        context.fillPath()
+        context.setShadow(offset: .zero, blur: 0, color: nil)
+        context.addPath(panelPath)
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+        context.setLineWidth(1.0)
+        context.strokePath()
+
+        // Divider between presets and custom/eyedropper (centered in its 20pt zone).
+        let divX = layout.custom.minX - 10.0
+        context.setStrokeColor(NSColor(white: 1.0, alpha: 0.15).cgColor)
+        context.setLineWidth(1.0)
+        context.move(to: CGPoint(x: divX, y: layout.panel.minY + 10))
+        context.addLine(to: CGPoint(x: divX, y: layout.panel.maxY - 10))
+        context.strokePath()
+
+        for (i, rect) in layout.presets.enumerated() {
+            let hex = i < paletteColors.count ? paletteColors[i] : "#ffffff"
+            drawSwatch(in: context, rect: rect,
+                       hex: hex,
+                       ring: activeColorHex.lowercased() == hex.lowercased(),
+                       hovered: colorShelfHover == .preset(i))
+        }
+        drawSwatch(in: context, rect: layout.custom,
+                   hex: customColorHex,
+                   ring: activeColorHex.lowercased() == customColorHex.lowercased(),
+                   hovered: colorShelfHover == .custom)
+
+        // Eyedropper button.
+        context.saveGState()
+        if colorShelfHover == .eyedropper {
+            let hovPath = CGPath(roundedRect: layout.eyedropper.insetBy(dx: -3, dy: -3), cornerWidth: 7, cornerHeight: 7, transform: nil)
+            context.addPath(hovPath)
+            context.setFillColor(NSColor(white: 1.0, alpha: 0.10).cgColor)
+            context.fillPath()
+        }
+        VectorIcons.drawIcon(action: "tool-eyedropper", in: context, bounds: layout.eyedropper, color: NSColor(white: 0.85, alpha: 1.0))
+        context.restoreGState()
+
+        // Hover tooltip.
+        if let hot = colorShelfHover {
+            let tip: ToolbarItem
+            switch hot {
+            case .preset(let i):
+                tip = ToolbarItem(action: "shelf-preset", shortcut: "\(i + 1)", tooltip: colorName(at: i), isTool: false)
+            case .custom:
+                tip = ToolbarItem(action: "shelf-custom", shortcut: "", tooltip: "Custom (\(customColorHex))", isTool: false)
+            case .eyedropper:
+                tip = ToolbarItem(action: "shelf-eyedropper", shortcut: "I", tooltip: "Eyedropper", isTool: false)
+            }
+            let barRect = toolbarRect(screenBounds: screenBounds)
+            drawTooltip(for: tip, itemRect: layout.panel, barRect: barRect, in: context, screenBounds: screenBounds)
+        }
+        context.restoreGState()
+    }
+
+    private func drawSwatch(in context: CGContext, rect: CGRect, hex: String, ring: Bool, hovered: Bool) {
+        guard let color = NSColor(hex: hex) else { return }
+        context.saveGState()
+        let circlePath = CGPath(ellipseIn: rect, transform: nil)
+        context.addPath(circlePath)
+        context.setFillColor(color.cgColor)
+        context.fillPath()
+        if ring {
+            context.setStrokeColor(NSColor.white.cgColor)
+            context.setLineWidth(2.5)
+            context.strokeEllipse(in: rect.insetBy(dx: -2, dy: -2))
+        } else if hovered {
+            context.setStrokeColor(NSColor(white: 1.0, alpha: 0.6).cgColor)
+            context.setLineWidth(1.5)
+            context.strokeEllipse(in: rect.insetBy(dx: -1, dy: -1))
+        }
+        context.restoreGState()
     }
 }
