@@ -233,7 +233,8 @@ public final class ToolbarView: @unchecked Sendable {
                 } else {
                     iconColor = NSColor(white: 0.75, alpha: 1.0)
                 }
-                VectorIcons.drawIcon(action: item.action, in: context, bounds: rect, color: iconColor)
+                VectorIcons.drawIcon(action: item.action == "tool-shape" ? shapeToolbarIcon() : item.action,
+                                     in: context, bounds: rect, color: iconColor)
                 context.restoreGState()
             }
         }
@@ -413,6 +414,16 @@ public final class ToolbarView: @unchecked Sendable {
         return nil
     }
 
+    /// Glyph for the Shape button: follows the active shape tool so the bar
+    /// reflects the current selection, falling back to the combo glyph.
+    public func shapeToolbarIcon() -> String {
+        switch activeToolAction {
+        case "tool-rectangle": return "tool-rectangle"
+        case "tool-ellipse": return "tool-ellipse"
+        default: return "tool-shape"
+        }
+    }
+
     public func colorName(at index: Int) -> String {
         let hex = index < paletteColors.count ? paletteColors[index] : ""
         let name = index < Self.colorNames.count ? Self.colorNames[index] : "Color \(index + 1)"
@@ -511,7 +522,7 @@ public final class ToolbarView: @unchecked Sendable {
     }
 
     /// Panel below the bar anchored under the Shape button (clamped on
-    /// screen): rectangle, ellipse, filled toggle.
+    /// screen): rectangle, ellipse, filled toggle — all iconic.
     public func shapeShelfLayout(screenBounds: CGRect) -> ShapeShelfLayout {
         let barRect = toolbarRect(screenBounds: screenBounds)
         let anchorX: CGFloat
@@ -520,12 +531,11 @@ public final class ToolbarView: @unchecked Sendable {
         } else {
             anchorX = barRect.midX
         }
-        let btnW: CGFloat = 96.0
-        let filledW: CGFloat = 84.0
+        let btnW: CGFloat = 40.0
         let btnH: CGFloat = 28.0
         let gap: CGFloat = 8.0
         let pad: CGFloat = 12.0
-        let panelW = pad * 2 + btnW + gap + btnW + gap + filledW
+        let panelW = pad * 2 + btnW + gap + btnW + gap + btnW
         let panelH = pad * 2 + btnH
         var panelX = anchorX - panelW / 2.0
         panelX = min(max(panelX, 12.0), max(12.0, screenBounds.maxX - panelW - 12.0))
@@ -537,7 +547,7 @@ public final class ToolbarView: @unchecked Sendable {
         x += btnW + gap
         let ellipse = CGRect(x: x, y: y, width: btnW, height: btnH)
         x += btnW + gap
-        let filled = CGRect(x: x, y: y, width: filledW, height: btnH)
+        let filled = CGRect(x: x, y: y, width: btnW, height: btnH)
         return ShapeShelfLayout(panel: panel, rectangle: rectangle, ellipse: ellipse, filled: filled)
     }
 
@@ -565,12 +575,12 @@ public final class ToolbarView: @unchecked Sendable {
         context.setLineWidth(1.0)
         context.strokePath()
 
-        drawShelfPill(in: context, rect: layout.rectangle, title: "Rectangle",
-                      active: false, hovered: shapeShelfHover == .rectangle)
-        drawShelfPill(in: context, rect: layout.ellipse, title: "Ellipse",
-                      active: false, hovered: shapeShelfHover == .ellipse)
-        drawShelfPill(in: context, rect: layout.filled, title: shapeFilled ? "Filled" : "Hollow",
-                      active: shapeFilled, hovered: shapeShelfHover == .filled)
+        drawShelfIconButton(in: context, rect: layout.rectangle, iconAction: "tool-rectangle",
+                            active: activeToolAction == "tool-rectangle", hovered: shapeShelfHover == .rectangle)
+        drawShelfIconButton(in: context, rect: layout.ellipse, iconAction: "tool-ellipse",
+                            active: activeToolAction == "tool-ellipse", hovered: shapeShelfHover == .ellipse)
+        drawShelfFillButton(in: context, rect: layout.filled,
+                            hovered: shapeShelfHover == .filled)
 
         if let hot = shapeShelfHover {
             let tip: ToolbarItem
@@ -588,7 +598,7 @@ public final class ToolbarView: @unchecked Sendable {
         context.restoreGState()
     }
 
-    private func drawShelfPill(in context: CGContext, rect: CGRect, title: String, active: Bool, hovered: Bool) {
+    private func drawShelfIconButton(in context: CGContext, rect: CGRect, iconAction: String?, active: Bool, hovered: Bool) {
         context.saveGState()
         let path = CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil)
         context.addPath(path)
@@ -600,13 +610,30 @@ public final class ToolbarView: @unchecked Sendable {
             context.setFillColor(NSColor(white: 1.0, alpha: 0.05).cgColor)
         }
         context.fillPath()
-        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        let str = NSAttributedString(string: title, attributes: [
-            .font: font,
-            .foregroundColor: NSColor(white: active || hovered ? 1.0 : 0.85, alpha: 1.0)
-        ])
-        let size = str.size()
-        str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
+        if let iconAction = iconAction {
+            VectorIcons.drawIcon(action: iconAction, in: context, bounds: rect,
+                                 color: NSColor(white: active || hovered ? 1.0 : 0.85, alpha: 1.0))
+        }
         context.restoreGState()
     }
+
+    private func drawShelfFillButton(in context: CGContext, rect: CGRect, hovered: Bool) {
+        // Rounded square, filled or hollow to mirror the current mode.
+        drawShelfIconButton(in: context, rect: rect, iconAction: nil, active: shapeFilled, hovered: hovered)
+        context.saveGState()
+        let glyph = CGRect(x: rect.midX - 7, y: rect.midY - 7, width: 14, height: 14)
+        let path = CGPath(roundedRect: glyph, cornerWidth: 3, cornerHeight: 3, transform: nil)
+        if shapeFilled {
+            context.addPath(path)
+            context.setFillColor(NSColor.white.cgColor)
+            context.fillPath()
+        } else {
+            context.addPath(path)
+            context.setStrokeColor(NSColor(white: 0.85, alpha: 1.0).cgColor)
+            context.setLineWidth(2.0)
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
 }

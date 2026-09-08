@@ -22,6 +22,17 @@ final class ToolbarShelfTests: XCTestCase {
         XCTAssertFalse(toolbar.shapeFilled)
     }
 
+    func testShapeToolbarIconFollowsActiveTool() {
+        let toolbar = ToolbarView()
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-shape")
+        toolbar.activeToolAction = "tool-rectangle"
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-rectangle")
+        toolbar.activeToolAction = "tool-ellipse"
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-ellipse")
+        toolbar.activeToolAction = "tool-arrow"
+        XCTAssertEqual(toolbar.shapeToolbarIcon(), "tool-shape")
+    }
+
     func testShelfLayoutInsideScreen() {
         let toolbar = ToolbarView()
         let layout = toolbar.colorShelfLayout(screenBounds: bounds)
