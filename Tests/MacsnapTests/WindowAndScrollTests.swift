@@ -320,4 +320,25 @@ final class WindowAndScrollTests: XCTestCase {
         XCTAssertTrue(files.contains { $0.hasSuffix(".png") })
         XCTAssertTrue(files.contains { $0.hasSuffix(".png.json") })
     }
+
+    @MainActor
+    func testBackdropCycleEnablesGrowth() {
+        let overlay = splitOverlay()
+        overlay.backdropStyle = .off
+        overlay.canvasBoundaryMode = .image
+        overlay.cycleBackground() // off -> slate (visible)
+        XCTAssertEqual(overlay.backdropStyle, .slate)
+        XCTAssertEqual(overlay.canvasBoundaryMode, .framed,
+                       "a visible backdrop must grow the canvas or it shows nothing")
+    }
+
+    @MainActor
+    func testBackdropCycleToInvisibleKeepsBoundary() {
+        let overlay = splitOverlay()
+        overlay.backdropStyle = .none
+        overlay.canvasBoundaryMode = .image
+        overlay.cycleBackground() // none -> off (invisible)
+        XCTAssertEqual(overlay.backdropStyle, .off)
+        XCTAssertEqual(overlay.canvasBoundaryMode, .image)
+    }
 }

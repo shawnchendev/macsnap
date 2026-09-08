@@ -2549,6 +2549,13 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         if let idx = styles.firstIndex(of: backdropStyle) {
             backdropStyle = styles[(idx + 1) % styles.count]
             recordOp(Operation(type: .background, background: backdropStyle, imageShadow: imageShadow))
+            // A visible backdrop needs grown canvas to show on: with a
+            // clipped (Image) boundary it would silently do nothing, so grow.
+            // (Startup already couples these the same way.)
+            if backdropStyle != .none && backdropStyle != .off && canvasBoundaryMode == .image {
+                canvasBoundaryMode = .framed
+                recordOp(Operation(type: .canvasBoundary, canvasBoundary: canvasBoundaryMode))
+            }
             needsDisplay = true
         }
     }
