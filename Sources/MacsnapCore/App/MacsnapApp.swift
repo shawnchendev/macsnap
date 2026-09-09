@@ -138,12 +138,15 @@ public final class MacsnapApp: NSObject, NSApplicationDelegate {
 
         // Check Screen Recording permissions. The system prompt (triggered by
         // the request call below) is the only dialog — no custom alert.
+        // The menu bar suppresses its own "Screenshot failed" dialog for this
+        // path (see MenuBarSupport.shouldSuppressCaptureFailureDialog): the
+        // system prompt already takes the user to Settings.
         if !ScreenCaptureEngine.hasScreenRecordingPermission() {
             fputs("[macsnap] Screen Recording permission is required.\n", stderr)
-            fputs("[macsnap] Please grant Screen Recording permission in System Settings > Privacy & Security > Screen & System Audio Recording.\n", stderr)
+            fputs("[macsnap] \(MenuBarSupport.permissionPromptMarker) — no further dialog needed.\n", stderr)
 
             _ = ScreenCaptureEngine.requestScreenRecordingPermission()
-            exit(1)
+            exit(MenuBarSupport.permissionPromptExitCode)
         }
 
         // Capture screen. Windows are always discovered (except instant

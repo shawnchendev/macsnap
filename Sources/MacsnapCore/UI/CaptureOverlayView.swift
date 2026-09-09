@@ -59,6 +59,72 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
     // Select-phase Discard button (top-left; Esc does the same)
     private var isHoveringSelectDiscard: Bool = false
+    /// Set once the pointer has been tracked so region guides don't draw at
+    /// the zero origin on the very first frame before any mouse event.
+    private var hasTrackedMouse: Bool = false
+
+    /// Region-style selection is active: select phase with a drag-to-select
+    /// kind and no modal scroll choice on screen. While true the pointer
+    /// becomes a crosshair with full-screen guide lines.
+    private var isRegionSelectionActive: Bool {
+        phase == .select
+            && (captureKind == .region || captureKind == .scroll)
+            && scrollPhase != .modeChoice
+    }
+
+    private func updateSelectPhaseCursor() {
+        if isHoveringSelectDiscard {
+            NSCursor.pointingHand.set()
+        } else if isRegionSelectionActive {
+            NSCursor.crosshair.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    /// Any edit-phase tool that creates content on the screenshot canvas
+    /// (everything except move/select). While a draw is in progress
+    /// (mouse down) the pointer uses the crosshair; otherwise the regular
+    /// cursor stays.
+    private var isEditDrawingTool: Bool {
+        phase == .edit && tool != .select
+    }
+
+    /// Move affordance takes precedence over the drawing crosshair: the select
+    /// tool over any annotation, or the text tool over a text annotation that
+    /// would be dragged instead of created.
+    private func isHoveringMovableAnnotation(at screenPoint: CGPoint) -> Bool {
+        let annPt = toAnnotationPoint(screenPoint)
+        if tool == .select {
+            return activeAnnotations.contains(where: { $0.bounds.insetBy(dx: -4, dy: -4).contains(annPt) })
+        } else if tool == .text {
+            return activeAnnotations.contains(where: { $0.kind == .text && $0.bounds.insetBy(dx: -6, dy: -6).contains(annPt) })
+        }
+        return false
+    }
+
+    private func updateEditPhaseCursor() {
+        if let handleIdx = cropHandleIndex(at: currentMousePoint) {
+            cursorForCropHandle(handleIdx).set()
+            hoveredCropHandleIndex = handleIdx
+            hoveredAnnotationHandle = nil
+        } else if let hit = annotationResizeHandleAt(currentMousePoint) {
+            cursorForAnnotationCorner(hit.corner).set()
+            hoveredCropHandleIndex = nil
+            hoveredAnnotationHandle = hit
+        } else {
+            hoveredCropHandleIndex = nil
+            hoveredAnnotationHandle = nil
+            if isHoveringMovableAnnotation(at: currentMousePoint) {
+                NSCursor.openHand.set()
+            } else if isMouseDown && isEditDrawingTool {
+                NSCursor.crosshair.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        }
+    }
+
     private func selectDiscardRect() -> CGRect {
         CGRect(x: 16.0, y: captureTabsOriginY, width: 32.0, height: 32.0)
     }
@@ -107,6 +173,13 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     private var isDraggingAnnotation: Bool = false
     private var dragAnnotationStartMouse: CGPoint = .zero
     private var dragAnnotationInitialStates: [(index: Int, annotation: Annotation)] = []
+
+    // Annotation Resize via selection-chrome corner handles (select tool).
+    // Corners: 0 = top-left, 1 = top-right, 2 = bottom-right, 3 = bottom-left.
+    private var resizingAnnotationIndex: Int? = nil
+    private var resizingCorner: Int? = nil
+    private var resizeInitialAnnotation: Annotation? = nil
+    private var hoveredAnnotationHandle: (index: Int, corner: Int)? = nil
 
     // View Pan & Zoom
     public var viewZoom: CGFloat = 1.0
@@ -192,6 +265,9 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateSafeArea()
+        if phase == .select {
+            updateSelectPhaseCursor()
+        }
     }
 
     public func updateSafeArea() {
@@ -330,6 +406,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         }
         context.restoreGState()
 
+        // 3a. Region crosshair guide lines spanning the screen through the
+        // pointer (under tabs/shelf/readout so chrome stays on top).
+        drawRegionGuides(in: context)
+
         // 4. Capture Kind Tabs at top center
         drawCaptureTabs(in: context)
 
@@ -380,6 +460,23 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         ])
         let size = str.size()
         str.draw(at: CGPoint(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0))
+        context.restoreGState()
+    }
+
+    private func drawRegionGuides(in context: CGContext) {
+        guard isRegionSelectionActive, hasTrackedMouse else { return }
+        guard bounds.contains(currentMousePoint) else { return }
+        context.saveGState()
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.55).cgColor)
+        context.setLineWidth(1.0)
+        context.setLineDash(phase: 0, lengths: [4, 4])
+        // Full-screen vertical guide.
+        context.move(to: CGPoint(x: currentMousePoint.x, y: bounds.minY))
+        context.addLine(to: CGPoint(x: currentMousePoint.x, y: bounds.maxY))
+        // Full-screen horizontal guide.
+        context.move(to: CGPoint(x: bounds.minX, y: currentMousePoint.y))
+        context.addLine(to: CGPoint(x: bounds.maxX, y: currentMousePoint.y))
+        context.strokePath()
         context.restoreGState()
     }
 
@@ -931,6 +1028,132 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         self.activeCrop = newSelection
     }
 
+    /// Screen-space selection rect (annotation bounds + padding) for a
+    /// selected annotation, matching what `drawSelectedAnnotationChrome` strokes.
+    public func annotationSelectionRect(for annotationIndex: Int) -> CGRect? {
+        guard annotationIndex < activeAnnotations.count else { return nil }
+        let bounds = activeAnnotations[annotationIndex].bounds
+        let p1 = toScreenPoint(CGPoint(x: bounds.minX, y: bounds.minY))
+        let p2 = toScreenPoint(CGPoint(x: bounds.maxX, y: bounds.maxY))
+        return CGRect(x: min(p1.x, p2.x) - 4, y: min(p1.y, p2.y) - 4, width: abs(p2.x - p1.x) + 8, height: abs(p2.y - p1.y) + 8)
+    }
+
+    /// The 4 corner handle rects (TL, TR, BR, BL) for a selected annotation.
+    public func annotationHandleRects(for annotationIndex: Int) -> [CGRect] {
+        guard let screenRect = annotationSelectionRect(for: annotationIndex) else { return [] }
+        let handleSize: CGFloat = 6.0
+        let corners = [
+            CGPoint(x: screenRect.minX, y: screenRect.minY),
+            CGPoint(x: screenRect.maxX, y: screenRect.minY),
+            CGPoint(x: screenRect.maxX, y: screenRect.maxY),
+            CGPoint(x: screenRect.minX, y: screenRect.maxY)
+        ]
+        return corners.map { corner in
+            CGRect(x: corner.x - handleSize / 2.0, y: corner.y - handleSize / 2.0, width: handleSize, height: handleSize)
+        }
+    }
+
+    /// Topmost selected annotation whose corner handle contains the point.
+    /// Resize handles only exist for the select tool in edit phase.
+    public func annotationResizeHandleAt(_ point: CGPoint) -> (index: Int, corner: Int)? {
+        guard phase == .edit, tool == .select else { return nil }
+        for idx in selectedAnnotationIndices.sorted().reversed() {
+            guard idx < activeAnnotations.count else { continue }
+            let rects = annotationHandleRects(for: idx)
+            for (corner, rect) in rects.enumerated() {
+                if rect.insetBy(dx: -6, dy: -6).contains(point) {
+                    return (idx, corner)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func cursorForAnnotationCorner(_ corner: Int) -> NSCursor {
+        switch corner {
+        case 0, 2: // Top-left / bottom-right
+            return cursorForCropHandle(0)
+        case 1, 3: // Top-right / bottom-left
+            return cursorForCropHandle(2)
+        default:
+            return .arrow
+        }
+    }
+
+    /// Maps a point from the annotation's old bounds to its new bounds
+    /// (per-axis scale; degenerate axes fall back to translation so lines
+    /// with zero width/height stay stable instead of producing NaN).
+    private func mapPointThroughBounds(_ point: CGPoint, from old: CGRect, to new: CGRect) -> CGPoint {
+        let x: CGFloat
+        if old.width < 1e-6 {
+            x = new.minX + (point.x - old.minX)
+        } else {
+            x = new.minX + (point.x - old.minX) / old.width * new.width
+        }
+        let y: CGFloat
+        if old.height < 1e-6 {
+            y = new.minY + (point.y - old.minY)
+        } else {
+            y = new.minY + (point.y - old.minY) / old.height * new.height
+        }
+        return CGPoint(x: x, y: y)
+    }
+
+    private func handleAnnotationResize(corner: Int, initial: Annotation, index: Int) {
+        let mouseAnn = toAnnotationPoint(currentMousePoint)
+        let old = initial.bounds
+        let minSize: CGFloat = 8.0
+        // The opposite corner stays anchored while the grabbed corner follows
+        // the pointer (clamped to a minimum size so the box can't flip).
+        let anchor: CGPoint
+        switch corner {
+        case 0: anchor = CGPoint(x: old.maxX, y: old.maxY)
+        case 1: anchor = CGPoint(x: old.minX, y: old.maxY)
+        case 2: anchor = CGPoint(x: old.minX, y: old.minY)
+        default: anchor = CGPoint(x: old.maxX, y: old.minY)
+        }
+        var newMinX = old.minX
+        var newMinY = old.minY
+        var newMaxX = old.maxX
+        var newMaxY = old.maxY
+        switch corner {
+        case 0: // Top-left moves
+            newMinX = min(mouseAnn.x, anchor.x - minSize)
+            newMinY = min(mouseAnn.y, anchor.y - minSize)
+            newMaxX = anchor.x
+            newMaxY = anchor.y
+        case 1: // Top-right moves
+            newMinX = anchor.x
+            newMinY = min(mouseAnn.y, anchor.y - minSize)
+            newMaxX = max(mouseAnn.x, anchor.x + minSize)
+            newMaxY = anchor.y
+        case 2: // Bottom-right moves
+            newMinX = anchor.x
+            newMinY = anchor.y
+            newMaxX = max(mouseAnn.x, anchor.x + minSize)
+            newMaxY = max(mouseAnn.y, anchor.y + minSize)
+        default: // Bottom-left moves
+            newMinX = min(mouseAnn.x, anchor.x - minSize)
+            newMinY = anchor.y
+            newMaxX = anchor.x
+            newMaxY = max(mouseAnn.y, anchor.y + minSize)
+        }
+        let new = CGRect(x: newMinX, y: newMinY, width: newMaxX - newMinX, height: newMaxY - newMinY)
+        var updated = initial
+        updated.start = mapPointThroughBounds(initial.start, from: old, to: new)
+        updated.end = mapPointThroughBounds(initial.end, from: old, to: new)
+        if !initial.points.isEmpty {
+            updated.points = initial.points.map { mapPointThroughBounds($0, from: old, to: new) }
+        }
+        if initial.kind == .marker {
+            // Markers are centered points: scale the badge size with the box.
+            let sx = old.width > 1e-6 ? new.width / old.width : 1.0
+            let sy = old.height > 1e-6 ? new.height / old.height : 1.0
+            updated.size = max(1.0, initial.size * Double(max(sx, sy)))
+        }
+        activeAnnotations[index] = updated
+    }
+
     private func drawSelectedAnnotationChrome(in context: CGContext) {
         guard !selectedAnnotationIndices.isEmpty else { return }
 
@@ -939,27 +1162,24 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         context.setLineDash(phase: 0, lengths: [4, 4])
         context.setLineWidth(1.5)
 
+        let isBoxResizing: Bool
+        if case .boxResize = activeHandle {
+            isBoxResizing = true
+        } else {
+            isBoxResizing = false
+        }
+
         for idx in selectedAnnotationIndices {
             guard idx < activeAnnotations.count else { continue }
-            let ann = activeAnnotations[idx]
-            let bounds = ann.bounds
-            let p1 = toScreenPoint(CGPoint(x: bounds.minX, y: bounds.minY))
-            let p2 = toScreenPoint(CGPoint(x: bounds.maxX, y: bounds.maxY))
-            let screenRect = CGRect(x: min(p1.x, p2.x) - 4, y: min(p1.y, p2.y) - 4, width: abs(p2.x - p1.x) + 8, height: abs(p2.y - p1.y) + 8)
+            guard let screenRect = annotationSelectionRect(for: idx) else { continue }
 
             context.stroke(screenRect)
 
-            // Draw handles at corners
-            let handleSize: CGFloat = 6.0
-            let corners = [
-                CGPoint(x: screenRect.minX, y: screenRect.minY),
-                CGPoint(x: screenRect.maxX, y: screenRect.minY),
-                CGPoint(x: screenRect.maxX, y: screenRect.maxY),
-                CGPoint(x: screenRect.minX, y: screenRect.maxY)
-            ]
-            for corner in corners {
-                let hRect = CGRect(x: corner.x - handleSize / 2.0, y: corner.y - handleSize / 2.0, width: handleSize, height: handleSize)
-                context.setFillColor(NSColor.white.cgColor)
+            // Draw handles at corners; the hovered / dragged handle fills blue.
+            for (corner, hRect) in annotationHandleRects(for: idx).enumerated() {
+                let isHot = (hoveredAnnotationHandle?.index == idx && hoveredAnnotationHandle?.corner == corner)
+                    || (isBoxResizing && resizingAnnotationIndex == idx && resizingCorner == corner)
+                context.setFillColor(isHot ? NSColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 1.0).cgColor : NSColor.white.cgColor)
                 context.fill(hRect)
                 context.setStrokeColor(NSColor.systemBlue.cgColor)
                 context.setLineWidth(1.0)
@@ -1162,6 +1382,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
     public override func mouseMoved(with event: NSEvent) {
         currentMousePoint = self.convert(event.locationInWindow, from: nil)
+        hasTrackedMouse = true
 
         if phase == .select {
             // Discard button hover (top-left).
@@ -1174,7 +1395,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 self.toolTip = "Discard (Esc)"
             } else {
                 self.toolTip = nil
-                NSCursor.arrow.set()
+                updateSelectPhaseCursor()
             }
 
             // Check recents hover
@@ -1206,6 +1427,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 if hot != nil {
                     NSCursor.pointingHand.set()
                     hoveredCropHandleIndex = nil
+                    hoveredAnnotationHandle = nil
                     needsDisplay = true
                     return
                 }
@@ -1220,6 +1442,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 if hot != nil {
                     NSCursor.pointingHand.set()
                     hoveredCropHandleIndex = nil
+                    hoveredAnnotationHandle = nil
                     needsDisplay = true
                     return
                 }
@@ -1237,24 +1460,9 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 )
             }
 
-            // 1. Check if hovering over any crop handle
-            if let handleIdx = cropHandleIndex(at: currentMousePoint) {
-                hoveredCropHandleIndex = handleIdx
-                cursorForCropHandle(handleIdx).set()
-            } else {
-                hoveredCropHandleIndex = nil
-                // 2. Update cursor based on hover over annotations
-                if tool == .select || tool == .text {
-                    let annPt = toAnnotationPoint(currentMousePoint)
-                    if activeAnnotations.contains(where: { $0.bounds.insetBy(dx: -4, dy: -4).contains(annPt) }) {
-                        NSCursor.openHand.set()
-                    } else {
-                        NSCursor.arrow.set()
-                    }
-                } else {
-                    NSCursor.arrow.set()
-                }
-            }
+            // 1. Check if hovering over any crop handle, movable annotation,
+            // or drawing canvas — drawing tools use the crosshair cursor.
+            updateEditPhaseCursor()
         }
         needsDisplay = true
     }
@@ -1263,6 +1471,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         isMouseDown = true
         dragStart = self.convert(event.locationInWindow, from: nil)
         currentMousePoint = dragStart
+        hasTrackedMouse = true
 
         if phase == .select {
             // Discard button (top-left) dismisses the overlay, same as Esc.
@@ -1317,6 +1526,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             }
 
             selection = CGRect(origin: dragStart, size: .zero)
+            updateSelectPhaseCursor()
         } else {
             // Edit phase
             // Check toolbar click
@@ -1407,6 +1617,21 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 return
             }
 
+            // Resize via selection-chrome corner handle (select tool). Takes
+            // precedence over move: the handles sit on the selection edge.
+            if tool == .select,
+               let hit = annotationResizeHandleAt(dragStart),
+               hit.index < activeAnnotations.count {
+                activeHandle = .boxResize(hit.corner)
+                resizingAnnotationIndex = hit.index
+                resizingCorner = hit.corner
+                resizeInitialAnnotation = activeAnnotations[hit.index]
+                hoveredAnnotationHandle = hit
+                cursorForAnnotationCorner(hit.corner).set()
+                needsDisplay = true
+                return
+            }
+
             let annPt = toAnnotationPoint(dragStart)
 
             // Double-click to edit existing text annotation
@@ -1441,6 +1666,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                     selectedAnnotationIndices.removeAll()
                     isDraggingAnnotation = false
                     dragAnnotationInitialStates.removeAll()
+                    hoveredAnnotationHandle = nil
                 }
             } else if tool == .eyedropper {
                 sampleEyedropperColor(at: annPt)
@@ -1462,6 +1688,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             } else if tool == .freehand || tool == .highlighter {
                 activeFreehandPoints = [annPt]
             }
+
+            // Pressing to draw keeps the crosshair; moving stays closedHand.
+            if !isDraggingAnnotation && activeHandle == nil && isEditDrawingTool {
+                NSCursor.crosshair.set()
+            }
         }
         needsDisplay = true
     }
@@ -1469,6 +1700,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
     public override func mouseDragged(with event: NSEvent) {
         guard isMouseDown else { return }
         currentMousePoint = self.convert(event.locationInWindow, from: nil)
+        hasTrackedMouse = true
 
         if phase == .select {
             // Region is fixed while picking a scroll mode.
@@ -1481,11 +1713,24 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
             let maxX = max(dragStart.x, currentMousePoint.x)
             let maxY = max(dragStart.y, currentMousePoint.y)
             selection = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            updateSelectPhaseCursor()
         } else {
             // Check if dragging a crop handle
             if case .cropHandle(let handleIdx) = activeHandle {
                 handleCropDrag(handleIndex: handleIdx)
                 cursorForCropHandle(handleIdx).set()
+                needsDisplay = true
+                return
+            }
+
+            // Check if resizing a selected annotation via its corner handle
+            if case .boxResize = activeHandle,
+               let rIdx = resizingAnnotationIndex,
+               let corner = resizingCorner,
+               let initial = resizeInitialAnnotation,
+               rIdx < activeAnnotations.count {
+                handleAnnotationResize(corner: corner, initial: initial, index: rIdx)
+                cursorForAnnotationCorner(corner).set()
                 needsDisplay = true
                 return
             }
@@ -1518,6 +1763,11 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 liveCutBand = (orientation: orient, start: orient == .horizontal ? min(startPt.y, annPt.y) : min(startPt.x, annPt.x), end: orient == .horizontal ? max(startPt.y, annPt.y) : max(startPt.x, annPt.x))
             } else if tool == .freehand || (tool == .highlighter && highlighterMode == .normal) {
                 activeFreehandPoints.append(annPt)
+            }
+
+            // Keep the crosshair while rubber-banding a drawing tool.
+            if isEditDrawingTool {
+                NSCursor.crosshair.set()
             }
         }
         needsDisplay = true
@@ -1554,6 +1804,28 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 if selection != initialSelectionBeforeCrop {
                     recordOp(Operation(type: .crop, crop: selection))
                 }
+                needsDisplay = true
+                return
+            }
+
+            // Edit phase commit annotation resize
+            if case .boxResize = activeHandle,
+               let rIdx = resizingAnnotationIndex,
+               let initial = resizeInitialAnnotation {
+                let finished = rIdx < activeAnnotations.count ? activeAnnotations[rIdx] : nil
+                activeHandle = nil
+                hoveredAnnotationHandle = nil
+                resizingAnnotationIndex = nil
+                resizingCorner = nil
+                resizeInitialAnnotation = nil
+                if let done = finished {
+                    let sizeDelta = hypot(done.bounds.width - initial.bounds.width, done.bounds.height - initial.bounds.height)
+                    let centerDelta = hypot(done.bounds.midX - initial.bounds.midX, done.bounds.midY - initial.bounds.midY)
+                    if sizeDelta >= 2.0 || centerDelta >= 2.0 {
+                        recordOp(Operation(type: .annotate, annotations: [done]))
+                    }
+                }
+                updateEditPhaseCursor()
                 needsDisplay = true
                 return
             }
@@ -1691,6 +1963,8 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                     runOCR(region: nil)
                 }
             }
+            // Draw finished (mouse is up): restore the regular cursor.
+            updateEditPhaseCursor()
         }
         needsDisplay = true
     }
@@ -1900,6 +2174,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         initialCaptureSelection = selection
         opLog.previewWidth = Int(selection.width)
         opLog.previewHeight = Int(selection.height)
+        updateEditPhaseCursor()
         needsDisplay = true
     }
 
@@ -2226,6 +2501,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         } else {
             hoveredWindow = nil
         }
+        updateSelectPhaseCursor()
         needsDisplay = true
     }
 
@@ -2239,6 +2515,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
 
     public func setTool(_ t: EditorTool) {
         self.tool = t
+        hoveredAnnotationHandle = nil
         switch t {
         case .select: toolbar.activeToolAction = "tool-select"
         case .arrow: toolbar.activeToolAction = "tool-arrow"
@@ -2254,6 +2531,9 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         case .text: toolbar.activeToolAction = "tool-text"
         case .ocr: toolbar.activeToolAction = "tool-ocr"
         case .eyedropper: toolbar.activeToolAction = "tool-eyedropper"
+        }
+        if phase == .edit {
+            updateEditPhaseCursor()
         }
         needsDisplay = true
     }
@@ -2308,6 +2588,10 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
                 runOCR(region: nil)
             case "tool-eyedropper": tool = .eyedropper
             default: break
+            }
+            hoveredAnnotationHandle = nil
+            if phase == .edit {
+                updateEditPhaseCursor()
             }
             needsDisplay = true
         }
@@ -2541,6 +2825,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         self.imageShadow = state.imageShadow
         self.canvasBoundaryMode = state.canvasBoundary
         self.nextMarker = state.nextMarker
+        self.hoveredAnnotationHandle = nil
         needsDisplay = true
     }
 
@@ -2604,6 +2889,7 @@ public final class CaptureOverlayView: NSView, NSTextFieldDelegate {
         let ids = selectedAnnotationIndices.compactMap { $0 < activeAnnotations.count ? activeAnnotations[$0].id : nil }
         activeAnnotations.removeAll { ids.contains($0.id) }
         selectedAnnotationIndices.removeAll()
+        hoveredAnnotationHandle = nil
         recordOp(Operation(type: .delete, ids: ids))
         needsDisplay = true
     }

@@ -151,6 +151,25 @@ public enum MenuBarSupport {
         return lower.contains("screen recording") || lower.contains("permission")
     }
 
+    /// Dedicated exit code the capture binary uses when it has just shown
+    /// the system Screen Recording prompt (first-run path).
+    public static let permissionPromptExitCode: Int32 = 3
+
+    /// Machine-readable marker emitted on stderr alongside the
+    /// permission-prompt exit, so log readers can identify the path even if
+    /// the exit code is lost.
+    public static let permissionPromptMarker = "System permission prompt shown"
+
+    /// True when the capture binary already showed the system Screen
+    /// Recording prompt. The system dialog takes the user to Settings, so
+    /// the menu bar must not stack its own "Screenshot failed" alert on top.
+    /// Other failures (e.g. stale TCC signature with capture failing despite
+    /// preflight passing) still deserve our dialog.
+    public static func shouldSuppressCaptureFailureDialog(stderr: String, terminationStatus: Int32) -> Bool {
+        if terminationStatus == permissionPromptExitCode { return true }
+        return stderr.contains(permissionPromptMarker)
+    }
+
     // MARK: - Menu shortcut display
 
     /// Native key equivalent for a binding, or nil when not representable

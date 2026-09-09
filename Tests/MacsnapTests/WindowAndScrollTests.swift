@@ -277,6 +277,26 @@ final class WindowAndScrollTests: XCTestCase {
         XCTAssertFalse(MenuBarSupport.shouldOfferSettingsButton(stderr: ""))
     }
 
+    func testShouldSuppressCaptureFailureDialog() {
+        // First-run path: system prompt shown — suppress our duplicate dialog.
+        XCTAssertTrue(MenuBarSupport.shouldSuppressCaptureFailureDialog(
+            stderr: "[macsnap] Screen Recording permission is required.\n[macsnap] \(MenuBarSupport.permissionPromptMarker) — no further dialog needed.",
+            terminationStatus: MenuBarSupport.permissionPromptExitCode
+        ))
+        // Marker alone suppresses even if the exit code is lost.
+        XCTAssertTrue(MenuBarSupport.shouldSuppressCaptureFailureDialog(
+            stderr: MenuBarSupport.permissionPromptMarker,
+            terminationStatus: 1
+        ))
+        // Stale-signature failure (preflight passed, capture still failed):
+        // no system prompt, so our dialog must still show.
+        XCTAssertFalse(MenuBarSupport.shouldSuppressCaptureFailureDialog(
+            stderr: "Failed to capture screen.",
+            terminationStatus: 1
+        ))
+        XCTAssertFalse(MenuBarSupport.shouldSuppressCaptureFailureDialog(stderr: "", terminationStatus: 1))
+    }
+
     func testDiagLogWritesAndRotates() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try! FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

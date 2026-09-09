@@ -191,4 +191,117 @@ final class CropHandleTests: XCTestCase {
         overlay.redo()
         XCTAssertEqual(overlay.selection.origin.x, 100.0 + shiftX, accuracy: 0.001)
     }
+
+    func testAnnotationCornerHandlesHitTest() {
+        let overlay = createTestOverlay()
+        overlay.tool = .select
+        let arrow = Annotation(
+            id: overlay.opLog.nextId,
+            kind: .arrow,
+            start: CGPoint(x: 150, y: 150),
+            end: CGPoint(x: 250, y: 200),
+            colorHex: "#ff375f",
+            size: 4.0
+        )
+        overlay.commitAnnotation(arrow)
+        overlay.selectedAnnotationIndices = [0]
+
+        let rects = overlay.annotationHandleRects(for: 0)
+        XCTAssertEqual(rects.count, 4, "Selected vectors must expose 4 corner handles (TL, TR, BR, BL)")
+
+        // Each handle center must hit-test back to its own corner.
+        for (corner, rect) in rects.enumerated() {
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let hit = overlay.annotationResizeHandleAt(center)
+            XCTAssertEqual(hit?.index, 0)
+            XCTAssertEqual(hit?.corner, corner)
+        }
+
+        // A point far from the selection must not hit any handle.
+        XCTAssertNil(overlay.annotationResizeHandleAt(CGPoint(x: 5, y: 5)))
+
+        // Handles only exist for the select tool — drawing tools create, not resize.
+        overlay.tool = .arrow
+        let brCenter = CGPoint(x: rects[2].midX, y: rects[2].midY)
+        XCTAssertNil(overlay.annotationResizeHandleAt(brCenter))
+    }
+
+    func testDragAnnotationCornerScalesVector() {
+        let overlay = createTestOverlay()
+        overlay.tool = .select
+        let arrow = Annotation(
+            id: overlay.opLog.nextId,
+            kind: .arrow,
+            start: CGPoint(x: 150, y: 150),
+            end: CGPoint(x: 250, y: 200),
+            colorHex: "#ff375f",
+            size: 4.0
+        )
+        overlay.commitAnnotation(arrow)
+        overlay.selectedAnnotationIndices = [0]
+        let initial = overlay.activeAnnotations[0]
+
+        // Press the bottom-right corner handle (index 2).
+        let rects = overlay.annotationHandleRects(for: 0)
+        let br = CGPoint(x: rects[2].midX, y: rects[2].midY)
+        overlay.mouseDown(with: clickEvent(.leftMouseDown, at: br)!)
+
+        // Drag down-right by 40 points in screen space.
+        let dragged = CGPoint(x: br.x + 40, y: br.y + 40)
+        overlay.mouseDragged(with: clickEvent(.leftMouseDragged, at: dragged)!)
+
+        // The vector must grow with the anchored (top-left) corner fixed.
+        let grown = overlay.activeAnnotations[0]
+        XCTAssertGreaterThan(grown.bounds.width, initial.bounds.width)
+        XCTAssertGreaterThan(grown.bounds.height, initial.bounds.height)
+        XCTAssertEqual(grown.bounds.minX, initial.bounds.minX, accuracy: 0.01)
+        XCTAssertEqual(grown.bounds.minY, initial.bounds.minY, accuracy: 0.01)
+
+        // Release commits an .annotate op carrying the resized vector.
+        overlay.mouseUp(with: clickEvent(.leftMouseUp, at: dragged)!)
+        XCTAssertEqual(overlay.opLog.ops.last?.type, .annotate)
+        XCTAssertEqual(overlay.opLog.ops.last?.annotations.first, grown)
+    }
+
+    func testAnnotationCornerClickWithoutDragRecordsNoOp() {
+        let overlay = createTestOverlay()
+        overlay.tool = .select
+        let arrow = Annotation(
+            id: overlay.opLog.nextId,
+            kind: .arrow,
+            start: CGPoint(x: 150, y: 150),
+            end: CGPoint(x: 250, y: 200),
+            colorHex: "#ff375f",
+            size: 4.0
+        )
+        overlay.commitAnnotation(arrow)
+        overlay.selectedAnnotationIndices = [0]
+        let opsBefore = overlay.opLog.ops.count
+
+        let rects = overlay.annotationHandleRects(for: 0)
+        let br = CGPoint(x: rects[2].midX, y: rects[2].midY)
+        overlay.mouseDown(with: clickEvent(.leftMouseDown, at: br)!)
+        overlay.mouseUp(with: clickEvent(.leftMouseUp, at: br)!)
+
+        XCTAssertEqual(overlay.activeAnnotations[0], arrow, "A press without drag must leave the vector untouched")
+        XCTAssertEqual(overlay.opLog.ops.count, opsBefore, "A press without drag must not record an operation")
+    }
+
+    // MARK: - Synthetic event helpers
+
+    /// The overlay has no window in tests, so (like the crop tests above)
+    /// window Y must be flipped manually against the 600pt test view height.
+    private func clickEvent(_ type: NSEvent.EventType, at screenPoint: CGPoint, clickCount: Int = 1) -> NSEvent? {
+        NSEvent.mouseEvent(
+            with: type,
+            location: CGPoint(x: screenPoint.x, y: 600 - screenPoint.y),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: clickCount,
+            pressure: type == .leftMouseUp ? 0.0 : 1.0
+        )
+    }
 }

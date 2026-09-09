@@ -196,6 +196,11 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSLog("macsnap-menubar: capture exited status=%d stderr=%@", process.terminationStatus, stderr)
             MenuBarSupport.diagLog("exit status=\(process.terminationStatus) stderr=\(stderr)")
             guard process.terminationStatus != 0 else { return }
+            // First-run permission path: the system prompt already takes the
+            // user to Settings — don't stack our own dialog on top of it.
+            if MenuBarSupport.shouldSuppressCaptureFailureDialog(stderr: stderr, terminationStatus: process.terminationStatus) {
+                return
+            }
             Task { @MainActor in
                 self?.showCaptureFailure(stderr: stderr)
             }
