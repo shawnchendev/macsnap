@@ -95,21 +95,22 @@ Durable options:
 
 ---
 
-## Setting up macOS Shortcuts
+## Setting up Global Hotkeys
 
-You can trigger `macsnap` with a global hotkey such as `Cmd+Shift+4` or `F12`:
+Set capture hotkeys right inside the app — no external tools needed:
 
-### Option A: Using Raycast / Alfred / skhd
-In `skhd` (`~/.config/skhd/skhdrc`):
+1. Click the macsnap menu-bar icon → **Settings…** → **Hotkeys** tab.
+2. Click a shortcut field (Region, Window, Scrolling Region, Fullscreen), then press your key combo (e.g. `Cmd+Shift+4` or `F12`). `Delete` clears, `Esc` cancels.
+3. Save — bindings apply immediately and persist in `~/.config/macsnap/macsnap.conf` (`[hotkeys]`, e.g. `region = cmd+shift+5`).
+
+### Alternative: external launchers (optional)
+
+Since `macsnap` is also a CLI binary, you can trigger it from Raycast / Alfred / `skhd` / Shortcuts.app instead. In `skhd` (`~/.config/skhd/skhdrc`):
 ```bash
 # Toggle macsnap overlay
 cmd + shift - 4 : macsnap
 ```
-
-### Option B: macOS Shortcuts App
-1. Open **Shortcuts.app** and create a new Shortcut.
-2. Add a **Run Shell Script** action: `~/.local/bin/macsnap`.
-3. Under Shortcut Details (sidebar), assign a keyboard shortcut (e.g. `Cmd+Shift+5` or `F12`).
+Or in **Shortcuts.app**: new Shortcut → **Run Shell Script** action with `~/.local/bin/macsnap`, then assign a keyboard shortcut under Shortcut Details.
 
 ---
 
