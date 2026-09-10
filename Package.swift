@@ -2,33 +2,33 @@
 import PackageDescription
 
 let package = Package(
-    name: "macsnap",
+    name: "opensnap",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "macsnap", targets: ["Macsnap"]),
-        .executable(name: "macsnap-menubar", targets: ["MacsnapMenuBar"]),
-        .library(name: "MacsnapCore", targets: ["MacsnapCore"])
+        .executable(name: "opensnap", targets: ["Opensnap"]),
+        .executable(name: "opensnap-menubar", targets: ["OpensnapMenuBar"]),
+        .library(name: "OpensnapCore", targets: ["OpensnapCore"])
     ],
     targets: [
         .target(
-            name: "MacsnapCore",
+            name: "OpensnapCore",
             resources: [
                 .process("Resources")
             ]
         ),
         .executableTarget(
-            name: "Macsnap",
-            dependencies: ["MacsnapCore"]
+            name: "Opensnap",
+            dependencies: ["OpensnapCore"]
         ),
         .executableTarget(
-            name: "MacsnapMenuBar",
-            dependencies: ["MacsnapCore"]
+            name: "OpensnapMenuBar",
+            dependencies: ["OpensnapCore"]
         ),
         .testTarget(
-            name: "MacsnapTests",
-            dependencies: ["MacsnapCore"]
+            name: "OpensnapTests",
+            dependencies: ["OpensnapCore"]
         )
     ]
 )

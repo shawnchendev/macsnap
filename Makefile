@@ -20,10 +20,10 @@ test:
 
 install: build
 	mkdir -p $(BINDIR)
-	install -m 755 .build/release/macsnap $(BINDIR)/macsnap
-	install -m 755 .build/release/macsnap-menubar $(BINDIR)/macsnap-menubar
-	@echo "macsnap installed to $(BINDIR)/macsnap"
-	@echo "macsnap-menubar installed to $(BINDIR)/macsnap-menubar"
+	install -m 755 .build/release/opensnap $(BINDIR)/opensnap
+	install -m 755 .build/release/opensnap-menubar $(BINDIR)/opensnap-menubar
+	@echo "opensnap installed to $(BINDIR)/opensnap"
+	@echo "opensnap-menubar installed to $(BINDIR)/opensnap-menubar"
 
 # Double-clickable app bundle (menu-bar resident, no Dock icon).
 # Pass CODESIGN_IDENTITY="Apple Development: Name (TEAMID)" for a stable
@@ -32,12 +32,12 @@ app:
 	./packaging/make-app.sh
 
 # Install the bundle into /Applications (may prompt for a password).
-# rm -rf first: cp -R into an existing dir would nest Macsnap.app inside
+# rm -rf first: cp -R into an existing dir would nest Opensnap.app inside
 # itself instead of replacing it.
 install-app: app
-	rm -rf /Applications/Macsnap.app
-	cp -R dist/Macsnap.app /Applications/Macsnap.app
-	@echo "Macsnap.app installed to /Applications/Macsnap.app"
+	rm -rf /Applications/Opensnap.app
+	cp -R dist/Opensnap.app /Applications/Opensnap.app
+	@echo "Opensnap.app installed to /Applications/Opensnap.app"
 
 clean:
 	swift package clean

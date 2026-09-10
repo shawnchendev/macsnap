@@ -1,4 +1,4 @@
-# macsnap
+# opensnap
 
 A native macOS screenshot and annotation overlay tool matching [tobi/omasnap](https://github.com/tobi/omasnap) feature-for-feature.
 
@@ -41,7 +41,7 @@ make test
 ```bash
 make install
 ```
-This installs the `macsnap` binary to `~/.local/bin/macsnap` (make sure `~/.local/bin` is on your `PATH`).
+This installs the `opensnap` binary to `~/.local/bin/opensnap` (make sure `~/.local/bin` is on your `PATH`).
 
 To install globally to `/usr/local/bin`:
 ```bash
@@ -55,34 +55,34 @@ sudo make install PREFIX=/usr/local
 For point-and-click triggering instead of the terminal, run the resident menu-bar app (also installed by `make install`):
 
 ```bash
-macsnap-menubar
+opensnap-menubar
 ```
 
-A viewfinder icon appears in the menu bar with Capture Region / Window / Scrolling Region / Fullscreen actions, an Open Screenshots Folder shortcut, an Open at Login toggle (LaunchAgent, takes effect next login), and Quit. Each action launches the installed `macsnap` binary, so the capture flow — and its Screen Recording permission — is unchanged. Only one menu-bar instance runs at a time.
+A viewfinder icon appears in the menu bar with Capture Region / Window / Scrolling Region / Fullscreen actions, an Open Screenshots Folder shortcut, an Open at Login toggle (LaunchAgent, takes effect next login), and Quit. Each action launches the installed `opensnap` binary, so the capture flow — and its Screen Recording permission — is unchanged. Only one menu-bar instance runs at a time.
 
 ## Settings (Menu Bar)
 
 **Settings…** (in the menu, `⌘,`) opens a settings panel with two tabs:
 
-- **General** — screenshots folder (with folder picker), filename pattern (`{date}` `{time}` `{app}` tokens), and Open at Login. When bundled as `Macsnap.app` in `/Applications`, login uses the system service; the bare-binary install writes a LaunchAgent file instead.
-- **Hotkeys** — system-wide shortcuts for all four capture modes, no Accessibility permission needed (Carbon hotkeys). Click *Record shortcut*, press a combo with at least one of ⌘/⌃/⌥/⇧, Delete clears, Esc cancels. Combos the system rejects (already taken) are reported on Save. Bindings persist in `~/.config/macsnap/macsnap.conf` under `[hotkeys]`, e.g. `region = cmd+shift+5`, and take effect immediately — no restart. They fire even when another app is focused; while an overlay is already open they toggle it closed, same as the CLI. Assigned shortcuts also appear next to their menu items.
+- **General** — screenshots folder (with folder picker), filename pattern (`{date}` `{time}` `{app}` tokens), and Open at Login. When bundled as `Opensnap.app` in `/Applications`, login uses the system service; the bare-binary install writes a LaunchAgent file instead.
+- **Hotkeys** — system-wide shortcuts for all four capture modes, no Accessibility permission needed (Carbon hotkeys). Click *Record shortcut*, press a combo with at least one of ⌘/⌃/⌥/⇧, Delete clears, Esc cancels. Combos the system rejects (already taken) are reported on Save. Bindings persist in `~/.config/opensnap/opensnap.conf` under `[hotkeys]`, e.g. `region = cmd+shift+5`, and take effect immediately — no restart. They fire even when another app is focused; while an overlay is already open they toggle it closed, same as the CLI. Assigned shortcuts also appear next to their menu items.
 
 ## Mac App Bundle
 
 For a double-clickable app (no terminal, no Dock icon), build the bundle and copy it to Applications:
 
 ```bash
-make app              # assembles dist/Macsnap.app (ad-hoc signed)
+make app              # assembles dist/Opensnap.app (ad-hoc signed)
 make install-app      # copies it to /Applications (may prompt for a password)
 ```
 
-Double-clicking `Macsnap.app` launches the same resident menu bar. Inside the bundle, `Contents/MacOS` holds both executables, so capture launching keeps working with no PATH setup. Open at Login uses the system login-items service when bundled (requires the app to live in `/Applications`).
+Double-clicking `Opensnap.app` launches the same resident menu bar. Inside the bundle, `Contents/MacOS` holds both executables, so capture launching keeps working with no PATH setup. Open at Login uses the system login-items service when bundled (requires the app to live in `/Applications`).
 
-> **One-time re-permission:** macOS grants Screen Recording per app identity, so the first capture from the bundle asks for permission again under the name “macsnap” — approve it once in System Settings and it sticks.
+> **One-time re-permission:** macOS grants Screen Recording per app identity, so the first capture from the bundle asks for permission again under the name “opensnap” — approve it once in System Settings and it sticks.
 
 ### Permissions & rebuilding (important)
 
-macOS pins a Screen Recording grant to the exact binary signature. The default build is **ad-hoc signed**, so **every rebuild invalidates the grant**: System Settings still shows the toggle ON, but captures fail (`Failed to match existing code requirement` in the log) until you remove macsnap with minus and re-add/re-approve it. If captures suddenly fail right after an update, that dance is the fix — not a bug in the capture code.
+macOS pins a Screen Recording grant to the exact binary signature. The default build is **ad-hoc signed**, so **every rebuild invalidates the grant**: System Settings still shows the toggle ON, but captures fail (`Failed to match existing code requirement` in the log) until you remove opensnap with minus and re-add/re-approve it. If captures suddenly fail right after an update, that dance is the fix — not a bug in the capture code.
 
 Durable options:
 1. **Sign with a free Apple Development certificate** (stable across rebuilds): in Xcode go to Settings → Accounts, add your Apple ID, then
@@ -99,18 +99,18 @@ Durable options:
 
 Set capture hotkeys right inside the app — no external tools needed:
 
-1. Click the macsnap menu-bar icon → **Settings…** → **Hotkeys** tab.
+1. Click the opensnap menu-bar icon → **Settings…** → **Hotkeys** tab.
 2. Click a shortcut field (Region, Window, Scrolling Region, Fullscreen), then press your key combo (e.g. `Cmd+Shift+4` or `F12`). `Delete` clears, `Esc` cancels.
-3. Save — bindings apply immediately and persist in `~/.config/macsnap/macsnap.conf` (`[hotkeys]`, e.g. `region = cmd+shift+5`).
+3. Save — bindings apply immediately and persist in `~/.config/opensnap/opensnap.conf` (`[hotkeys]`, e.g. `region = cmd+shift+5`).
 
 ### Alternative: external launchers (optional)
 
-Since `macsnap` is also a CLI binary, you can trigger it from Raycast / Alfred / `skhd` / Shortcuts.app instead. In `skhd` (`~/.config/skhd/skhdrc`):
+Since `opensnap` is also a CLI binary, you can trigger it from Raycast / Alfred / `skhd` / Shortcuts.app instead. In `skhd` (`~/.config/skhd/skhdrc`):
 ```bash
-# Toggle macsnap overlay
-cmd + shift - 4 : macsnap
+# Toggle opensnap overlay
+cmd + shift - 4 : opensnap
 ```
-Or in **Shortcuts.app**: new Shortcut → **Run Shell Script** action with `~/.local/bin/macsnap`, then assign a keyboard shortcut under Shortcut Details.
+Or in **Shortcuts.app**: new Shortcut → **Run Shell Script** action with `~/.local/bin/opensnap`, then assign a keyboard shortcut under Shortcut Details.
 
 ---
 
@@ -118,32 +118,32 @@ Or in **Shortcuts.app**: new Shortcut → **Run Shell Script** action with `~/.l
 
 ```bash
 # Freeform region capture (default)
-macsnap
+opensnap
 
 # Explicit starting modes
-macsnap --capture-region
-macsnap --capture-window
-macsnap --capture-fullscreen
-macsnap --scroll
+opensnap --capture-region
+opensnap --capture-window
+opensnap --capture-fullscreen
+opensnap --scroll
 
 # Compatibility aliases
-macsnap region
-macsnap windows
-macsnap fullscreen
-macsnap smart
+opensnap region
+opensnap windows
+opensnap fullscreen
+opensnap smart
 
 # Quick output (skips annotation editor)
-macsnap --copy              # Copy PNG to clipboard only
-macsnap --save              # Save PNG to ~/Pictures/Screenshots only
-macsnap --copy --save       # Copy and save immediately
+opensnap --copy              # Copy PNG to clipboard only
+opensnap --save              # Save PNG to ~/Pictures/Screenshots only
+opensnap --copy --save       # Copy and save immediately
 
 # Open existing image or clipboard
-macsnap /path/to/screenshot.png
-macsnap --file /path/to/screenshot.png
-macsnap --clipboard
+opensnap /path/to/screenshot.png
+opensnap --file /path/to/screenshot.png
+opensnap --clipboard
 
 # Pinned mode
-macsnap --pin /path/to/screenshot.png
+opensnap --pin /path/to/screenshot.png
 ```
 
 ---
@@ -161,7 +161,7 @@ macsnap --pin /path/to/screenshot.png
 | Arrow keys | Move between windows in window mode |
 | `Enter` | Capture highlighted window |
 | `Cmd+A` | Select fullscreen |
-| Scrolling capture | Drag a region, pick Manual ↓/→ (you scroll) or Auto ↓/→ (macsnap scrolls), then Done stitches |
+| Scrolling capture | Drag a region, pick Manual ↓/→ (you scroll) or Auto ↓/→ (opensnap scrolls), then Done stitches |
 | Hover right edge | Fan out 5 most recent captures; click one to reopen |
 | `Esc` | Dismiss overlay |
 
@@ -199,7 +199,7 @@ macsnap --pin /path/to/screenshot.png
 
 ## Configuration
 
-Optional configuration file at `~/.config/macsnap/macsnap.conf` (or `~/.config/omasnap/omasnap.conf`):
+Optional configuration file at `~/.config/opensnap/opensnap.conf`:
 
 ```ini
 [output]
@@ -221,9 +221,9 @@ default = none
 ```
 
 Environment variable overrides:
-- `MACSNAP_SCREENSHOT_DIR` / `OMASNAP_SCREENSHOT_DIR`
-- `MACSNAP_RECENT_DIR` / `OMASNAP_RECENT_DIR`
-- `MACSNAP_OCR_LANGS` / `OMASNAP_OCR_LANGS`
+- `OPENSNAP_SCREENSHOT_DIR`
+- `OPENSNAP_RECENT_DIR`
+- `OPENSNAP_OCR_LANGS`
 
 ---
 

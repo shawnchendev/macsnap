@@ -1,6 +1,6 @@
 import Cocoa
 
-// Renders the macsnap app icon (SF viewfinder glyph on a dark rounded
+// Renders the opensnap app icon (SF viewfinder glyph on a dark rounded
 // square) into an .iconset directory. Run: swift packaging/render-icon.swift <iconset-dir>
 guard CommandLine.arguments.count == 2 else {
     fputs("usage: render-icon.swift <iconset-dir>\n", stderr)
@@ -21,7 +21,7 @@ func render(size: Int) -> NSImage? {
     bg.fill()
     // White viewfinder glyph, ~62% of the canvas (template tinted via
     // source-atop so it renders white, not black).
-    if let glyph = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "macsnap") {
+    if let glyph = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "opensnap") {
         let glyphLen = length * 0.62
         let tinted = NSImage(size: NSSize(width: glyphLen, height: glyphLen))
         tinted.lockFocus()

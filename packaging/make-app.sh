@@ -1,14 +1,14 @@
 #!/bin/bash
-# Assembles dist/Macsnap.app from release builds:
-#   CFBundleExecutable = macsnap-menubar (resident menu bar)
-#   Contents/MacOS/macsnap            (capture engine, launched by the menu bar)
+# Assembles dist/Opensnap.app from release builds:
+#   CFBundleExecutable = opensnap-menubar (resident menu bar)
+#   Contents/MacOS/opensnap            (capture engine, launched by the menu bar)
 # Usage: packaging/make-app.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION=$(sed -n 's/.*public static let version = "\(.*\)".*/\1/p' Sources/MacsnapCore/App/MacsnapApp.swift | head -n 1)
+VERSION=$(sed -n 's/.*public static let version = "\(.*\)".*/\1/p' Sources/OpensnapCore/App/OpensnapApp.swift | head -n 1)
 VERSION=${VERSION:-1.0.0}
-BUNDLE_ID="com.macsnap.app"
+BUNDLE_ID="com.opensnap.app"
 # Signing identity: pass CODESIGN_IDENTITY="Apple Development: Name (TEAMID)"
 # for a stable signature whose Screen Recording grant survives rebuilds.
 # Default ad-hoc (-) works but every rebuild invalidates the TCC entry.
@@ -16,17 +16,17 @@ CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 if [ "$CODESIGN_IDENTITY" = "-" ]; then
     echo "==> warning: ad-hoc signing — re-grant Screen Recording after every rebuild (see README 'Permissions & rebuilding')"
 fi
-DIST="dist/Macsnap.app"
+DIST="dist/Opensnap.app"
 CONTENTS="$DIST/Contents"
 
-echo "==> building release (macsnap $VERSION)"
+echo "==> building release (opensnap $VERSION)"
 swift build -c release
 
 echo "==> assembling $DIST"
 rm -rf "$DIST"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
-cp .build/release/macsnap "$CONTENTS/MacOS/macsnap"
-cp .build/release/macsnap-menubar "$CONTENTS/MacOS/macsnap-menubar"
+cp .build/release/opensnap "$CONTENTS/MacOS/opensnap"
+cp .build/release/opensnap-menubar "$CONTENTS/MacOS/opensnap-menubar"
 
 # App icon (best effort; bundle works without one).
 ICONSET="$(mktemp -d)/AppIcon.iconset"
@@ -49,15 +49,15 @@ cat > "$CONTENTS/Info.plist" <<EOF
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>macsnap</string>
+	<string>opensnap</string>
 	<key>CFBundleExecutable</key>
-	<string>macsnap-menubar</string>
+	<string>opensnap-menubar</string>
 	<key>CFBundleIdentifier</key>
 	<string>$BUNDLE_ID</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>macsnap</string>
+	<string>opensnap</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -76,8 +76,8 @@ $ICON_KEY
 EOF
 
 echo "==> signing with '${CODESIGN_IDENTITY}'"
-codesign --force -s "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/macsnap" >/dev/null
-codesign --force -s "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/macsnap-menubar" >/dev/null
+codesign --force -s "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/opensnap" >/dev/null
+codesign --force -s "$CODESIGN_IDENTITY" "$CONTENTS/MacOS/opensnap-menubar" >/dev/null
 codesign --force -s "$CODESIGN_IDENTITY" "$DIST" >/dev/null 2>&1 || true
 
 echo "==> done: $DIST"
