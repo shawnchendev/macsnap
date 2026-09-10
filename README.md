@@ -1,6 +1,6 @@
 # opensnap
 
-Native macOS screenshot capture and annotation tool, matching [tobi/omasnap](https://github.com/tobi/omasnap) feature-for-feature. Built in Swift 6 on AppKit, CoreGraphics, and Apple Vision.
+Native macOS screenshot capture and annotation tool, matching [omasnap](https://github.com/tobi/omasnap) feature-for-feature. Built in Swift 6 on AppKit, CoreGraphics, and Apple Vision.
 
 It captures at native Retina resolution before showing the overlay, so the editor never captures itself. Annotations stay as movable vector layers with unlimited undo/redo, persisted exactly in sidecar `.png.json` files for crash recovery and re-editing.
 
